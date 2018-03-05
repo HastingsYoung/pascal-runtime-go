@@ -1,9 +1,10 @@
 package source
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"io"
-	"text/scanner"
 	"unicode/utf8"
 )
 
@@ -13,19 +14,20 @@ const (
 )
 
 type Source struct {
-	reader  scanner.Scanner
+	reader  *bufio.Scanner
 	currPos int     // current line position
 	line    *string // current line
+	lineNum int     // current line number
 }
 
 func NewSource(reader io.Reader) *Source {
-	var s scanner.Scanner
-	s.Init(reader)
-	s.Filename = "source"
+	s := bufio.NewScanner(reader)
+	s.Split(bufio.ScanLines)
 	return &Source{
 		reader:  s,
 		currPos: -3,
 		line:    nil,
+		lineNum: -1,
 	}
 }
 
@@ -43,7 +45,7 @@ func (src *Source) CurrentChar() (rune, error) {
 		src.readLine()
 		return src.NextChar()
 	} else {
-		r, _ := utf8.DecodeRune([]byte{(*src.line)[src.currPos]})
+		r, _ := utf8.DecodeRune([]byte{(*src.line)[src.CurrentPos()]})
 		return r, nil
 	}
 }
@@ -52,37 +54,46 @@ func (src *Source) NextChar() (rune, error) {
 	src.currPos++
 	r, err := src.CurrentChar()
 	if src.line != nil {
-		fmt.Println("LOG:", *src.line, src.currPos, r)
+		fmt.Println("LOG:", "line:", *src.line, "current position:", src.CurrentPos(), "rune:", r)
 	}
 	return r, err
 }
 
 func (src *Source) PeekChar() (rune, error) {
-	char := src.reader.Peek()
-
-	if char != scanner.EOF {
-		return char, nil
+	if src.CurrentPos()+1 > len(*src.line) {
+		return EOL, nil
 	}
 
-	return EOF, nil
-}
+	r, size := utf8.DecodeRune([]byte{(*src.line)[src.CurrentPos()+1]})
 
-func (src *Source) LineNum() int {
-	return src.reader.Pos().Line
+	if size == 0 {
+		return EOL, nil
+	}
+
+	if size == 1 {
+		return r, errors.New("Encoding Is Invalid")
+	}
+
+	return r, nil
 }
 
 func (src *Source) CurrentPos() int {
 	return src.currPos
 }
 
+func (src *Source) LineNum() int {
+	return src.lineNum
+}
+
 func (src *Source) readLine() {
-	char := src.reader.Scan()
-	src.currPos = -1
-	if char != -1 {
-		line := src.reader.TokenText()
+	if src.reader.Scan() {
+		src.lineNum++
+		line := src.reader.Text()
 		src.line = &line
+		src.currPos = -1
 		return
 	}
 	src.line = nil
+	// panic(errors.New("Scan Error At: " + *src.line))
 	return
 }

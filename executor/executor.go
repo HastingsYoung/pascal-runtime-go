@@ -2,7 +2,7 @@ package executor
 
 import (
 	"errors"
-	. "github.com/lexer-example/node"
+	. "github.com/pascal-runtime-go/node"
 	"math"
 )
 

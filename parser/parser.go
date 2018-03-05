@@ -2,9 +2,9 @@ package parser
 
 import (
 	"fmt"
-	. "github.com/lexer-example/intermediate"
-	. "github.com/lexer-example/scanner"
-	. "github.com/lexer-example/token"
+	. "github.com/pascal-runtime-go/intermediate"
+	. "github.com/pascal-runtime-go/scanner"
+	. "github.com/pascal-runtime-go/token"
 )
 
 type Parser interface {

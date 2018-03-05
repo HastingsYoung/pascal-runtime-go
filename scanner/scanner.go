@@ -1,8 +1,8 @@
 package scanner
 
 import (
-	. "github.com/lexer-example/source"
-	. "github.com/lexer-example/token"
+	. "github.com/pascal-runtime-go/source"
+	. "github.com/pascal-runtime-go/token"
 )
 
 type Scanner interface {
@@ -29,8 +29,6 @@ func (scanner *PascalScanner) ExtractToken() *Token {
 		currChar rune
 	)
 
-	scanner.skipWhiteSpace()
-
 	currChar, _ = scanner.CurrentChar()
 
 	scanner.token = NewToken(scanner.source, currChar)
@@ -38,6 +36,7 @@ func (scanner *PascalScanner) ExtractToken() *Token {
 }
 
 func (scanner *PascalScanner) CurrentChar() (rune, error) {
+	scanner.skipWhiteSpace()
 	return scanner.source.CurrentChar()
 }
 
@@ -55,20 +54,20 @@ func (scanner *PascalScanner) NextToken() *Token {
 }
 
 func (scanner *PascalScanner) skipWhiteSpace() {
-	r, _ := scanner.CurrentChar()
+	r, _ := scanner.source.CurrentChar()
 
-	for r == 32 || r == '{' || r == '\n' {
+	for r == 32 || r == '{' || r == '\n' || r == '\t' {
 		// start of a comment
 		if r == '{' {
 			// consume comment content
-			for r, _ = scanner.NextChar(); r != '}' && r != EOF; r, _ = scanner.NextChar() {
+			for r, _ = scanner.source.NextChar(); r != '}' && r != EOF; r, _ = scanner.source.NextChar() {
 			}
 
 			if r == '}' {
-				r, _ = scanner.NextChar()
+				r, _ = scanner.source.NextChar()
 			}
 		} else {
-			r, _ = scanner.NextChar()
+			r, _ = scanner.source.NextChar()
 		}
 	}
 }

@@ -3,7 +3,7 @@ package token
 import (
 	"errors"
 	"fmt"
-	. "github.com/lexer-example/source"
+	. "github.com/pascal-runtime-go/source"
 	"math"
 	"unicode"
 )
@@ -12,6 +12,7 @@ type TokenType int
 
 const (
 	EOFToken TokenType = iota
+	EOLToken
 	WordToken
 	NumberToken
 	StringToken
@@ -23,6 +24,7 @@ const MAX_EXPONENT = 37
 
 var TokenTypes = map[TokenType]string{
 	EOFToken:           "EOF",
+	EOLToken:           "EOL",
 	WordToken:          "WORD",
 	NumberToken:        "NUMBER",
 	StringToken:        "STRING",
@@ -52,6 +54,8 @@ func NewToken(source *Source, char ...rune) *Token {
 
 		if currChar == EOF {
 			token.Type = EOFToken
+		} else if currChar == EOL {
+			token.Type = EOLToken
 		} else if unicode.IsLetter(currChar) {
 			token.Type = WordToken
 		} else if unicode.IsNumber(currChar) {
@@ -79,6 +83,8 @@ func NewToken(source *Source, char ...rune) *Token {
 func (tk *Token) Extract() *Token {
 	switch tk.Type {
 	case EOFToken:
+		return tk
+	case EOLToken:
 		return tk
 	case WordToken:
 		var chars []rune
@@ -198,12 +204,9 @@ func (tk *Token) Extract() *Token {
 			currentChar rune
 		)
 
-		currentChar, _ = tk.CurrentChar()
-		textBuffer = append(textBuffer, currentChar)
-
-		if unicode.IsSpace(currentChar) {
-			currentChar = ' '
-		}
+		// left '\''
+		textBuffer = append(textBuffer, '\'')
+		currentChar, _ = tk.NextChar()
 
 		if currentChar != '\'' && currentChar != EOF {
 			textBuffer = append(textBuffer, currentChar)

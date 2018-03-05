@@ -3,10 +3,10 @@ package main
 import (
 	"io"
 	// . "github.com/lexer-example/executor"
-	. "github.com/lexer-example/intermediate"
-	. "github.com/lexer-example/parser"
-	. "github.com/lexer-example/scanner"
-	. "github.com/lexer-example/source"
+	. "github.com/pascal-runtime-go/intermediate"
+	. "github.com/pascal-runtime-go/parser"
+	. "github.com/pascal-runtime-go/scanner"
+	. "github.com/pascal-runtime-go/source"
 	"strings"
 )
 
@@ -33,14 +33,13 @@ func NewPascal(src io.Reader) *Pascal {
 }
 
 func main() {
-	NewPascal(strings.NewReader(`
-		PROGRAM Hello;
+	NewPascal(strings.NewReader(
+		`PROGRAM Hello;
 
 		VAR       
 		    Num1, Num2, Sum : Integer;
 
 		BEGIN
 			Write('Hello World. Prepare to learn PASCAL!!');
-			Readln;
-		END.`))
+		END`))
 }
