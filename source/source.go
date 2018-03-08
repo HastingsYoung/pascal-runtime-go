@@ -3,7 +3,7 @@ package source
 import (
 	"bufio"
 	"errors"
-	"fmt"
+	"github.com/pascal-runtime-go/message"
 	"io"
 	"unicode/utf8"
 )
@@ -54,7 +54,7 @@ func (src *Source) NextChar() (rune, error) {
 	src.currPos++
 	r, err := src.CurrentChar()
 	if src.line != nil {
-		fmt.Println("LOG:", "line:", *src.line, "current position:", src.CurrentPos(), "rune:", r)
+		message.Log("line:", src.LineNum(), "position:", src.CurrentPos(), "rune:", r)
 	}
 	return r, err
 }

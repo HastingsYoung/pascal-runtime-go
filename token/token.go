@@ -2,7 +2,7 @@ package token
 
 import (
 	"errors"
-	"fmt"
+	"github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/source"
 	"math"
 	"unicode"
@@ -365,7 +365,7 @@ func (tk *Token) Extract() *Token {
 
 		return tk
 	default:
-		fmt.Println("-------Unknown token type--------")
+		message.Error("Unknown Token Type")
 		// ErrorToken
 		tk.Type = ErrorToken
 		tk.Value = errors.New("Invalid Character")

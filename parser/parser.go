@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"fmt"
 	. "github.com/pascal-runtime-go/intermediate"
+	"github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/scanner"
 	. "github.com/pascal-runtime-go/token"
 )
@@ -43,11 +43,8 @@ func (parser *PascalParser) SymTab() *SymTab {
 
 func (parser *PascalParser) Parse() error {
 	for token := parser.NextToken(); token.Type != EOFToken && token.Type != ErrorToken; token = parser.NextToken() {
-		fmt.Println("TOKEN:", *token)
+		message.Log("Token:", *token)
 	}
-	tk := *parser.CurrentToken()
-	fmt.Println(tk.Value, tk.Type, tk.Name)
-
 	return nil
 }
 

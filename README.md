@@ -1,9 +1,8 @@
 # Pascal-Runtime-Go
 ## Intro
-A mirror to the code implementation of ***[Writing Compilers and Interpreters (3rd edition): A Software Engineering Approach](http://www.apropos-logic.com/wci/)*** in Golang.
-
 A Pascal runtime written in Golang.
 
+Highly inspired by ***[Writing Compilers and Interpreters (3rd edition): A Software Engineering Approach](http://www.apropos-logic.com/wci/)***.
 
 ## Todos
 - Source	[✓]
@@ -13,7 +12,7 @@ A Pascal runtime written in Golang.
 - Node
 - AST
 - Executor
-- Logs
+- Messages	[✓]
 
 ## Keywords
 - AND
