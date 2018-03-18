@@ -375,6 +375,26 @@ func (tk *Token) Extract() *Token {
 	return tk
 }
 
+func (tk *Token) GetName() TokenName {
+	return tk.Name
+}
+
+func (tk *Token) GetType() TokenType {
+	return tk.Type
+}
+
+func (tk *Token) GetText() string {
+	return tk.Text
+}
+
+func (tk *Token) GetLineNum() int {
+	return tk.Source.LineNum()
+}
+
+func (tk *Token) GetValue() interface{} {
+	return tk.Value
+}
+
 func (tk *Token) CurrentChar() (rune, error) {
 	return tk.Source.CurrentChar()
 }

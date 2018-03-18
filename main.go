@@ -14,7 +14,7 @@ type Pascal struct {
 	parser Parser
 	source *Source
 	iCode  ICode
-	symTab *SymTab
+	stack  *SymTabStack
 	// executor Executor
 }
 
@@ -27,8 +27,8 @@ func NewPascal(src io.Reader) *Pascal {
 	return &Pascal{
 		parser: parser,
 		source: source,
-		iCode:  parser.ICode(),
-		symTab: parser.SymTab(),
+		iCode:  parser.GetICode(),
+		stack:  parser.GetSymTabStack(),
 	}
 }
 
@@ -41,5 +41,5 @@ func main() {
 
 		BEGIN
 			Write('Hello World. Prepare to learn PASCAL!!');
-		END`))
+		END.`))
 }

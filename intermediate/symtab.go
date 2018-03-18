@@ -3,6 +3,8 @@ package intermediate
 import (
 	"errors"
 	"github.com/emirpasic/gods/maps/treemap"
+	. "github.com/pascal-runtime-go/intermediate/definition"
+	. "github.com/pascal-runtime-go/intermediate/routinecode"
 )
 
 type SymTabStack struct {
@@ -93,6 +95,8 @@ type SymTabEntry struct {
 	lineNums   []int
 	parent     *SymTab
 	attributes map[string]interface{}
+	defn       Definition
+	spec       TypeSpec
 }
 
 func NewSymTabEntry(n string, t *SymTab) *SymTabEntry {
@@ -114,6 +118,29 @@ func (ste *SymTabEntry) GetSymTab() *SymTab {
 
 func (ste *SymTabEntry) GetLineNums() []int {
 	return ste.lineNums
+}
+
+func (ste *SymTabEntry) AppendLineNum(n int) {
+	ste.lineNums = append(ste.lineNums, n)
+	return
+}
+
+func (ste *SymTabEntry) SetDefinition(defn Definition) {
+	ste.defn = defn
+	return
+}
+
+func (ste *SymTabEntry) GetDefinition() Definition {
+	return ste.defn
+}
+
+func (ste *SymTabEntry) SetTypeSpec(spec TypeSpec) {
+	ste.spec = spec
+	return
+}
+
+func (ste *SymTabEntry) GetTypeSpec() TypeSpec {
+	return ste.spec
 }
 
 func (ste *SymTabEntry) SetAttribute(attr string, val interface{}) {
