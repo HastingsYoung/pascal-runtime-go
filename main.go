@@ -11,7 +11,7 @@ import (
 )
 
 type Pascal struct {
-	parser Parser
+	parser IParser
 	source *Source
 	iCode  ICode
 	stack  *SymTabStack

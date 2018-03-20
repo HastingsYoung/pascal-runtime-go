@@ -3,8 +3,7 @@ package intermediate
 import (
 	"errors"
 	"github.com/emirpasic/gods/maps/treemap"
-	. "github.com/pascal-runtime-go/intermediate/definition"
-	. "github.com/pascal-runtime-go/intermediate/routinecode"
+	"github.com/pascal-runtime-go/intermediate/definition"
 )
 
 type SymTabStack struct {
@@ -38,6 +37,24 @@ func (sts *SymTabStack) LookUpLocal(name string) *SymTabEntry {
 func (sts *SymTabStack) Add(tab *SymTab) *SymTabStack {
 	sts.tabs = append(sts.tabs, tab)
 	return sts
+}
+
+func (sts *SymTabStack) Remove(nestingLevel int) {
+	sts.tabs = append(sts.tabs[nestingLevel:], sts.tabs[:nestingLevel]...)
+}
+
+func (sts *SymTabStack) Push() *SymTab {
+	sts.currNestingLevel++
+	symTab := NewSymTab(sts.currNestingLevel)
+	sts.Add(symTab)
+	return symTab
+}
+
+func (sts *SymTabStack) Pop() *SymTab {
+	symTab := sts.GetLocalSymtab()
+	sts.currNestingLevel--
+	sts.Remove(sts.currNestingLevel)
+	return symTab
 }
 
 type SymTab struct {
@@ -95,8 +112,8 @@ type SymTabEntry struct {
 	lineNums   []int
 	parent     *SymTab
 	attributes map[string]interface{}
-	defn       Definition
-	spec       TypeSpec
+	defn       definition.Definition
+	spec       *TypeSpec
 }
 
 func NewSymTabEntry(n string, t *SymTab) *SymTabEntry {
@@ -125,21 +142,21 @@ func (ste *SymTabEntry) AppendLineNum(n int) {
 	return
 }
 
-func (ste *SymTabEntry) SetDefinition(defn Definition) {
+func (ste *SymTabEntry) SetDefinition(defn definition.Definition) {
 	ste.defn = defn
 	return
 }
 
-func (ste *SymTabEntry) GetDefinition() Definition {
+func (ste *SymTabEntry) GetDefinition() definition.Definition {
 	return ste.defn
 }
 
-func (ste *SymTabEntry) SetTypeSpec(spec TypeSpec) {
+func (ste *SymTabEntry) SetTypeSpec(spec *TypeSpec) {
 	ste.spec = spec
 	return
 }
 
-func (ste *SymTabEntry) GetTypeSpec() TypeSpec {
+func (ste *SymTabEntry) GetTypeSpec() *TypeSpec {
 	return ste.spec
 }
 
@@ -147,10 +164,10 @@ func (ste *SymTabEntry) SetAttribute(attr string, val interface{}) {
 	ste.attributes[attr] = val
 }
 
-func (ste *SymTabEntry) GetAttribute(attr string) (interface{}, error) {
+func (ste *SymTabEntry) GetAttribute(attr string) interface{} {
 	val, ok := ste.attributes[attr]
 	if !ok {
-		return val, errors.New("Attribute Not Exist")
+		return nil
 	}
-	return val, nil
+	return val
 }
