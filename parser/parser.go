@@ -4,23 +4,35 @@ import (
 	"errors"
 	"github.com/pascal-runtime-go/intermediate"
 	"github.com/pascal-runtime-go/intermediate/definition"
+	"github.com/pascal-runtime-go/intermediate/routinecode"
 	"github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/scanner"
 	. "github.com/pascal-runtime-go/token"
+	"strconv"
 	"strings"
 )
 
 type OpSubset map[TokenName]TokenName
 
-func (subset *OpSubset) Contains(name TokenName) bool {
-	if _, ok := (*subset)[name]; !ok {
+func (subset OpSubset) Contains(name TokenName) bool {
+	if _, ok := subset[name]; !ok {
 		return false
 	}
 
 	return true
 }
 
-// Updates: delete [Parse() error] function
+func (subset OpSubset) Copy() OpSubset {
+	s := subset
+	return s
+}
+
+func (subset OpSubset) Add(name TokenName) OpSubset {
+	subset[name] = name
+	s := subset
+	return s
+}
+
 type IParser interface {
 	GetScanner() Scanner
 	GetICode() intermediate.ICode
@@ -83,7 +95,7 @@ func (parser *PascalParser) GetSymTabStack() *intermediate.SymTabStack {
 
 func (parser *PascalParser) Parse() error {
 
-	iCode := intermediate.NewICode()
+	iCode := intermediate.NewICodeImpl()
 
 	token := parser.NextToken()
 
@@ -209,7 +221,7 @@ func (parser *DeclarationsParser) Parse(
 	name := token.GetName()
 
 	for name == PROCEDURE || name == FUNCTION {
-		routineParser := NewDeclaredroutineParser(parser)
+		routineParser := NewDeclaredRoutineParser(parser)
 		routineParser.Parse(token, parentId)
 
 		token = parser.CurrentToken()
@@ -228,15 +240,295 @@ func (parser *DeclarationsParser) Parse(
 
 type DeclaredRoutineParser struct {
 	IDeclarationParser
+	counter int
 }
 
-func NewDeclaredroutineParser(parent IDeclarationParser) *DeclaredRoutineParser {
+func NewDeclaredRoutineParser(parent IDeclarationParser) *DeclaredRoutineParser {
 	return &DeclaredRoutineParser{
 		parent,
+		0,
 	}
 }
 
-// todo: DeclaredRoutineParser.Parse
+var (
+	PARAMETER_SET = OpSubset{
+		CONST:       CONST,
+		TYPE:        TYPE,
+		VAR:         VAR,
+		PROCEDURE:   PROCEDURE,
+		FUNCTION:    FUNCTION,
+		BEGIN:       BEGIN,
+		IDENTIFIER:  IDENTIFIER,
+		RIGHT_PAREN: RIGHT_PAREN,
+	}
+
+	LEFT_PAREN_SET = OpSubset{
+		CONST:      CONST,
+		TYPE:       TYPE,
+		VAR:        VAR,
+		PROCEDURE:  PROCEDURE,
+		FUNCTION:   FUNCTION,
+		BEGIN:      BEGIN,
+		LEFT_PAREN: LEFT_PAREN,
+		SEMICOLON:  SEMICOLON,
+		COLON:      COLON,
+	}
+
+	RIGHT_PAREN_SET = OpSubset{
+		CONST:       CONST,
+		TYPE:        TYPE,
+		VAR:         VAR,
+		PROCEDURE:   PROCEDURE,
+		FUNCTION:    FUNCTION,
+		BEGIN:       BEGIN,
+		RIGHT_PAREN: RIGHT_PAREN,
+		SEMICOLON:   SEMICOLON,
+		COLON:       COLON,
+	}
+
+	PARAMETER_FOLLOW_SET = OpSubset{
+		CONST:       CONST,
+		TYPE:        TYPE,
+		VAR:         VAR,
+		PROCEDURE:   PROCEDURE,
+		FUNCTION:    FUNCTION,
+		BEGIN:       BEGIN,
+		COLON:       COLON,
+		RIGHT_PAREN: RIGHT_PAREN,
+		SEMICOLON:   SEMICOLON,
+	}
+
+	COMMA_SET = OpSubset{
+		CONST:       CONST,
+		TYPE:        TYPE,
+		VAR:         VAR,
+		PROCEDURE:   PROCEDURE,
+		FUNCTION:    FUNCTION,
+		BEGIN:       BEGIN,
+		COMMA:       COMMA,
+		COLON:       COLON,
+		IDENTIFIER:  IDENTIFIER,
+		RIGHT_PAREN: RIGHT_PAREN,
+		SEMICOLON:   SEMICOLON,
+	}
+)
+
+func (parser *DeclaredRoutineParser) Parse(
+	token *Token,
+	parentId *intermediate.SymTabEntry,
+) *intermediate.SymTabEntry {
+	var (
+		routineDef definition.Definition
+		dummyName  string
+		routineId  *intermediate.SymTabEntry
+		tokenName  = token.GetName()
+	)
+
+	switch tokenName {
+	case PROGRAM:
+		token = parser.NextToken()
+		routineDef = definition.PROGRAM
+		dummyName = strings.ToLower("DummyProgramName")
+	case PROCEDURE:
+		token = parser.NextToken()
+		routineDef = definition.PROCEDURE
+		dummyName = strings.ToLower("DummyProcedureName_" + strconv.Itoa(parser.counter))
+		parser.counter++
+	case FUNCTION:
+		token = parser.NextToken()
+		routineDef = definition.FUNCTION
+		dummyName = strings.ToLower("DummyFunctionName_" + strconv.Itoa(parser.counter))
+		parser.counter++
+	default:
+		routineDef = definition.PROGRAM
+		dummyName = strings.ToLower("DummyProgramName")
+	}
+
+	routineId = parser.ParseRoutineName(token, dummyName)
+	routineId.SetDefinition(routineDef)
+
+	token = parser.CurrentToken()
+
+	iCode := intermediate.NewICodeImpl()
+	routineId.SetAttribute("ROUTINE_ICODE", iCode)
+	routineId.SetAttribute("ROUTINE_ROUTINES", []*intermediate.SymTabEntry{})
+
+	if routineId.GetAttribute("ROUTINE_CODE") == routinecode.FORWARD {
+		symTab := (routineId.GetAttribute("ROUTINE_SYMTAB")).(*intermediate.SymTab)
+		parser.GetSymTabStack().Add(symTab)
+	} else {
+		routineId.SetAttribute("ROUTINE_SYMTAB", parser.GetSymTabStack().Push())
+	}
+
+	if routineDef == definition.PROGRAM {
+		parser.GetSymTabStack().SetProgramId(routineId)
+	} else if routineId.GetAttribute("ROUTINE_CODE") == routinecode.FORWARD {
+		if token.GetName() != SEMICOLON {
+			panic(errors.New("Already Forwarded"))
+		}
+	} else {
+		parser.ParseHeader(token, routineId)
+	}
+
+	token = parser.CurrentToken()
+
+	if token.GetName() == SEMICOLON {
+		for ; token.GetName() == SEMICOLON; token = parser.NextToken() {
+		}
+	} else {
+		panic(errors.New("Missing Semicolon"))
+	}
+
+	if token.GetName() == IDENTIFIER && strings.ToLower(token.GetText()) == "forward" {
+		token = parser.NextToken()
+		routineId.SetAttribute("ROUTINE_CODE", routinecode.FORWARD)
+	} else {
+		routineId.SetAttribute("ROUTINE_CODE", routinecode.DECLARED)
+		blockParser := NewBlockParser(parser)
+		rootNode := blockParser.Parse(token, routineId)
+		iCode.SetRoot(rootNode)
+	}
+
+	parser.GetSymTabStack().Pop()
+
+	return routineId
+}
+
+func (parser *DeclaredRoutineParser) ParseRoutineName(
+	token *Token,
+	dummyName string,
+) *intermediate.SymTabEntry {
+	var routineId *intermediate.SymTabEntry
+
+	if token.GetName() == IDENTIFIER {
+		routineName := strings.ToLower(token.GetText())
+		routineId = parser.GetSymTabStack().LookUpLocal(routineName)
+
+		if routineId == nil {
+			routineId = parser.GetSymTabStack().EnterLocal(routineName)
+		} else if routineId.GetAttribute("ROUTINE_CODE") != routinecode.FORWARD {
+			routineId = nil
+			panic(errors.New("Identifier Redefined"))
+		}
+
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Identifier"))
+	}
+
+	if routineId == nil {
+		routineId = parser.GetSymTabStack().EnterLocal(dummyName)
+	}
+
+	return routineId
+}
+
+func (parser *DeclaredRoutineParser) ParseHeader(
+	token *Token,
+	routineId *intermediate.SymTabEntry,
+) {
+	parser.ParseFormalParameters(token, routineId)
+	token = parser.CurrentToken()
+
+	if routineId.GetDefinition() == definition.FUNCTION {
+		variableDeclarationsParser := NewVariableDeclarationsParser(parser)
+		variableDeclarationsParser.SetDefinition(definition.FUNCTION)
+		spec := variableDeclarationsParser.ParseTypeSpec(token)
+
+		token = parser.CurrentToken()
+
+		if spec != nil {
+			form := spec.GetForm()
+			if form == intermediate.ARRAY || form == intermediate.RECORD {
+				panic(errors.New("Invalid Type"))
+			}
+		} else {
+			spec = intermediate.UndefinedType
+		}
+
+		routineId.SetTypeSpec(spec)
+		token = parser.CurrentToken()
+	}
+}
+
+func (parser *DeclaredRoutineParser) ParseFormalParameters(
+	token *Token,
+	routineId *intermediate.SymTabEntry,
+) {
+	token = parser.Synchronize(LEFT_PAREN_SET)
+
+	if token.GetName() == LEFT_PAREN {
+		token = parser.NextToken()
+		params := []*intermediate.SymTabEntry{}
+		token = parser.Synchronize(PARAMETER_SET)
+
+		for name := token.GetName(); name == IDENTIFIER || name == VAR; name = token.GetName() {
+			params = append(params, parser.ParseParmSublist(token, routineId)...)
+			token = parser.CurrentToken()
+		}
+
+		if token.GetName() == RIGHT_PAREN {
+			token = parser.NextToken()
+		} else {
+			panic(errors.New("Missing Right Paren"))
+		}
+
+		routineId.SetAttribute("ROUTINE_PARMS", params)
+	}
+}
+
+func (parser *DeclaredRoutineParser) ParseParmSublist(
+	token *Token,
+	routineId *intermediate.SymTabEntry,
+) []*intermediate.SymTabEntry {
+
+	var (
+		isProgram = routineId.GetDefinition() == definition.PROGRAM
+		parmDefn  definition.Definition
+		name      = token.GetName()
+	)
+
+	if isProgram {
+		parmDefn = definition.PROGRAM_PARM
+	}
+
+	if name == VAR {
+		if !isProgram {
+			parmDefn = definition.VAR_PARM
+		} else {
+			panic(errors.New("Invalid Var Parameter"))
+		}
+
+		token = parser.NextToken()
+	} else if !isProgram {
+		parmDefn = definition.VALUE_PARM
+	}
+
+	variableDeclarationsParser := NewVariableDeclarationsParser(parser)
+	variableDeclarationsParser.SetDefinition(parmDefn)
+	sublist := variableDeclarationsParser.ParseIdentifierSublist(
+		token,
+		PARAMETER_FOLLOW_SET,
+		COMMA_SET,
+	)
+
+	token = parser.CurrentToken()
+	name = token.GetName()
+
+	if !isProgram {
+		if name == SEMICOLON {
+			for token.GetName() == SEMICOLON {
+				token = parser.NextToken()
+			}
+		} else if NEXT_START_SET.Contains(name) {
+			panic(errors.New("Missing Semicolon"))
+		}
+
+		token = parser.Synchronize(PARAMETER_SET)
+	}
+
+	return sublist
+}
 
 type ConstantDefinitionsParser struct {
 	IDeclarationParser
@@ -459,6 +751,39 @@ func (parser *ConstantDefinitionsParser) GetConstantTypeFromToken(token *Token) 
 	}
 
 	return nil
+}
+
+type BlockParser struct {
+	IParser
+}
+
+func NewBlockParser(parent IParser) *BlockParser {
+	return &BlockParser{
+		parent,
+	}
+}
+
+func (parser *BlockParser) Parse(token *Token, routineId *intermediate.SymTabEntry) intermediate.ICodeNode {
+	declarationsParser := NewDeclarationsParser(parser)
+	statementParser := NewStatementParser(parser)
+	declarationsParser.Parse(token, routineId)
+	token = parser.Synchronize(STMT_START_SET)
+
+	name := token.GetName()
+	var rootNode intermediate.ICodeNode
+
+	if name == BEGIN {
+		rootNode = statementParser.Parse(token)
+	} else {
+		panic(errors.New("Missing Begin"))
+
+		if STMT_START_SET.Contains(name) {
+			rootNode = intermediate.NewICodeNodeImpl(intermediate.COMPOUND)
+			statementParser.ParseList(token, rootNode, END)
+		}
+	}
+
+	return rootNode
 }
 
 type TypeDefinitionsParser struct {
@@ -941,8 +1266,118 @@ func NewVariableDeclarationsParserFromScanner(scan Scanner) *VariableDeclaration
 	}
 }
 
+var (
+	COLON_SET = OpSubset{
+		COLON:     COLON,
+		SEMICOLON: SEMICOLON,
+	}
+	IDENTIFIER_START_SET = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		COMMA:      COMMA,
+	}
+	IDENTIFIER_FOLLOW_SET = OpSubset{
+		COLON:     COLON,
+		SEMICOLON: SEMICOLON,
+		VAR:       VAR,
+		PROCEDURE: PROCEDURE,
+		FUNCTION:  FUNCTION,
+		BEGIN:     BEGIN,
+	}
+	COMMA_SET_VDP = OpSubset{
+		COMMA:      COMMA,
+		COLON:      COLON,
+		IDENTIFIER: IDENTIFIER,
+		SEMICOLON:  SEMICOLON,
+	}
+	NEXT_START_SET_VDP = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		SEMICOLON:  SEMICOLON,
+		PROCEDURE:  PROCEDURE,
+		FUNCTION:   FUNCTION,
+		BEGIN:      BEGIN,
+	}
+)
+
 func (parser *VariableDeclarationsParser) SetDefinition(def definition.Definition) {
 	parser.def = def
+}
+
+func (parser *VariableDeclarationsParser) ParseTypeSpec(token *Token) *intermediate.TypeSpec {
+	token = parser.Synchronize(COLON_SET)
+
+	if token.GetName() == COLON {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Colon"))
+	}
+
+	typeSpecificationParser := NewTypeSpecificationParser(parser)
+	spec := typeSpecificationParser.Parse(token)
+
+	if parser.def != definition.VARIABLE && parser.def != definition.FIELD && spec != nil && spec.GetIdentifier() == nil {
+		panic(errors.New("Invalid Type"))
+	}
+
+	return spec
+}
+
+func (parser *VariableDeclarationsParser) ParseIdentifierSublist(
+	token *Token,
+	followSet,
+	commaSet OpSubset,
+) []*intermediate.SymTabEntry {
+	sublist := []*intermediate.SymTabEntry{}
+	token = parser.Synchronize(IDENTIFIER_START_SET)
+	do := true
+
+	for do || !followSet.Contains(token.GetName()) {
+		do = false
+		id := parser.ParseIdentifier(token)
+		if id != nil {
+			sublist = append(sublist, id)
+		}
+
+		token = parser.Synchronize(commaSet)
+		if token.GetName() == COMMA {
+			token = parser.NextToken()
+			if followSet.Contains(token.GetName()) {
+				panic(errors.New("Missing Identifier"))
+			}
+		} else if IDENTIFIER_START_SET.Contains(token.GetName()) {
+			panic(errors.New("Missing Comma"))
+		}
+	}
+
+	if parser.def != definition.PROGRAM_PARM {
+		spec := parser.ParseTypeSpec(token)
+		for _, v := range sublist {
+			v.SetTypeSpec(spec)
+		}
+	}
+	return sublist
+}
+
+func (parser *VariableDeclarationsParser) ParseIdentifier(token *Token) *intermediate.SymTabEntry {
+	var id *intermediate.SymTabEntry
+
+	if token.GetName() == IDENTIFIER {
+		text := strings.ToLower(token.GetText())
+		id = parser.GetSymTabStack().LookUpLocal(text)
+
+		if id == nil {
+			id = parser.GetSymTabStack().EnterLocal(text)
+			id.SetDefinition(parser.def)
+			id.AppendLineNum(token.GetLineNum())
+		} else {
+			panic(errors.New("Identifier Redefined"))
+		}
+
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Identifier"))
+	}
+
+	return id
 }
 
 type StatementParser struct {
@@ -955,13 +1390,67 @@ func NewStatementParser(parent IParser) *StatementParser {
 	}
 }
 
+var STMT_START_SET = OpSubset{
+	BEGIN:      BEGIN,
+	CASE:       CASE,
+	FOR:        FOR,
+	IF:         IF,
+	REPEAT:     REPEAT,
+	WHILE:      WHILE,
+	IDENTIFIER: IDENTIFIER,
+	SEMICOLON:  SEMICOLON,
+}
+
+var STMT_FOLLOW_SET = OpSubset{
+	SEMICOLON: SEMICOLON,
+	END:       END,
+	ELSE:      ELSE,
+	UNTIL:     UNTIL,
+	DOT:       DOT,
+}
+
 func (parser *StatementParser) Parse(token *Token) intermediate.ICodeNode {
 	var statementNode intermediate.ICodeNode
 	switch token.GetName() {
 	case BEGIN:
 		statementNode = NewCompoundStatementParser(parser).Parse(token)
 	case IDENTIFIER:
-		statementNode = NewAssignmentStatementParser(parser).Parse(token)
+		var idDef definition.Definition
+		text := strings.ToLower(token.GetText())
+		id := parser.GetSymTabStack().LookUpLocal(text)
+
+		if id != nil {
+			idDef = id.GetDefinition()
+		} else {
+			idDef = definition.UNDEFINED
+		}
+
+		switch idDef {
+		case definition.VARIABLE:
+			statementNode = NewAssignmentStatementParser(parser).Parse(token)
+		case definition.VALUE_PARM:
+			statementNode = NewAssignmentStatementParser(parser).Parse(token)
+		case definition.VAR_PARM:
+			statementNode = NewAssignmentStatementParser(parser).Parse(token)
+		case definition.UNDEFINED:
+			statementNode = NewAssignmentStatementParser(parser).Parse(token)
+		case definition.FUNCTION:
+			statementNode = NewAssignmentStatementParser(parser).ParseFunctionNameAssignment(token)
+		case definition.PROCEDURE:
+			statementNode = NewCallParser(parser).Parse(token)
+		default:
+			panic(errors.New("Unexpected Token"))
+		}
+	case REPEAT:
+		statementNode = NewRepeatStatementParser(parser).Parse(token)
+	case WHILE:
+		statementNode = NewWhileStatementParser(parser).Parse(token)
+	case FOR:
+		statementNode = NewForStatementParser(parser).Parse(token)
+	case IF:
+		statementNode = NewIfStatementParser(parser).Parse(token)
+	case CASE:
+		statementNode = NewCaseStatementParser(parser).Parse(token)
 	default:
 		statementNode = intermediate.NewICodeNodeImpl("NO_OP")
 	}
@@ -981,6 +1470,10 @@ func (parser *StatementParser) ParseList(
 	parentNode intermediate.ICodeNode,
 	terminator TokenName,
 ) {
+	terminatorSet := STMT_START_SET.
+		Copy().
+		Add(terminator)
+
 	for token.Type != EOFToken && token.GetName() != terminator {
 		statementNode := parser.Parse(token)
 		parentNode.AddChild(statementNode)
@@ -989,12 +1482,10 @@ func (parser *StatementParser) ParseList(
 		tokenName := token.GetName()
 		if tokenName == SEMICOLON {
 			token = parser.NextToken()
-		} else if tokenName == IDENTIFIER {
+		} else if STMT_START_SET.Contains(tokenName) {
 			panic(errors.New("Mission Semicolon"))
-		} else if tokenName != terminator {
-			panic(errors.New("Unexpected Token"))
-			token = parser.NextToken()
 		}
+		token = parser.Synchronize(terminatorSet)
 	}
 
 	if token.GetName() == terminator {
@@ -1004,6 +1495,76 @@ func (parser *StatementParser) ParseList(
 
 	panic("Unknown Token")
 	return
+}
+
+type CallParser struct {
+	IStatementParser
+}
+
+func NewCallParser(parent IStatementParser) *CallParser {
+	return &CallParser{
+		parent,
+	}
+}
+
+type CallStandardParser struct {
+	IStatementParser
+}
+
+func NewCallStandardParser(parent IStatementParser) *CallStandardParser {
+	return &CallStandardParser{
+		parent,
+	}
+}
+
+type IfStatementParser struct {
+	IStatementParser
+}
+
+func NewIfStatementParser(parent IStatementParser) *IfStatementParser {
+	return &IfStatementParser{
+		parent,
+	}
+}
+
+type WhileStatementParser struct {
+	IStatementParser
+}
+
+func NewWhileStatementParser(parent IStatementParser) *WhileStatementParser {
+	return &WhileStatementParser{
+		parent,
+	}
+}
+
+type RepeatStatementParser struct {
+	IStatementParser
+}
+
+func NewRepeatStatementParser(parent IStatementParser) *RepeatStatementParser {
+	return &RepeatStatementParser{
+		parent,
+	}
+}
+
+type ForStatementParser struct {
+	IStatementParser
+}
+
+func NewForStatementParser(parent IStatementParser) *ForStatementParser {
+	return &ForStatementParser{
+		parent,
+	}
+}
+
+type CaseStatementParser struct {
+	IStatementParser
+}
+
+func NewCaseStatementParser(parent IStatementParser) *CaseStatementParser {
+	return &CaseStatementParser{
+		parent,
+	}
 }
 
 type ExpressionParser struct {
@@ -1222,11 +1783,13 @@ func (parser *CompoundStatementParser) Parse(token *Token) intermediate.ICodeNod
 
 type AssignmentStatementParser struct {
 	IStatementParser
+	isFunctionTarget bool
 }
 
 func NewAssignmentStatementParser(parent IStatementParser) *AssignmentStatementParser {
 	return &AssignmentStatementParser{
 		parent,
+		false,
 	}
 }
 
@@ -1254,4 +1817,9 @@ func (parser *AssignmentStatementParser) Parse(token *Token) intermediate.ICodeN
 	expressionParser := NewExpressionParser(parser)
 	assignNode.AddChild(expressionParser.Parse(token))
 	return assignNode
+}
+
+func (parser *AssignmentStatementParser) ParseFunctionNameAssignment(token *Token) intermediate.ICodeNode {
+	parser.isFunctionTarget = true
+	return parser.Parse(token)
 }

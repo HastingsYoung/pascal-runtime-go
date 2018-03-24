@@ -9,6 +9,7 @@ import (
 type SymTabStack struct {
 	tabs             []*SymTab
 	currNestingLevel int
+	programId        *SymTabEntry
 }
 
 func NewSymTabStack() *SymTabStack {
@@ -55,6 +56,14 @@ func (sts *SymTabStack) Pop() *SymTab {
 	sts.currNestingLevel--
 	sts.Remove(sts.currNestingLevel)
 	return symTab
+}
+
+func (sts *SymTabStack) SetProgramId(id *SymTabEntry) {
+	sts.programId = id
+}
+
+func (sts *SymTabStack) GetProgramId() *SymTabEntry {
+	return sts.programId
 }
 
 type SymTab struct {

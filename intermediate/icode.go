@@ -26,6 +26,6 @@ func (code *ICodeImpl) GetRoot() ICodeNode {
 	return code.root
 }
 
-func NewICode() ICode {
+func NewICodeImpl() ICode {
 	return new(ICodeImpl)
 }
