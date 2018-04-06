@@ -5,6 +5,7 @@ import (
 	"github.com/pascal-runtime-go/intermediate"
 	"github.com/pascal-runtime-go/intermediate/definition"
 	"github.com/pascal-runtime-go/intermediate/routinecode"
+	"github.com/pascal-runtime-go/intermediate/typechecker"
 	"github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/scanner"
 	. "github.com/pascal-runtime-go/token"
@@ -61,6 +62,19 @@ type IStatementParser interface {
 		parentNode intermediate.ICodeNode,
 		terminator TokenName,
 	)
+	SetLineNum(node intermediate.ICodeNode, token *Token)
+}
+
+type ICallParser interface {
+	IParser
+	Parse(token *Token) intermediate.ICodeNode
+	ParseActualParameters(
+		token *Token,
+		pfId *intermediate.SymTabEntry,
+		isDeclared,
+		isReadReadln,
+		isWriteWriteln bool,
+	) intermediate.ICodeNode
 }
 
 type ITypeSpecificationParser interface {
@@ -1497,6 +1511,12 @@ func (parser *StatementParser) ParseList(
 	return
 }
 
+func (parser *StatementParser) SetLineNum(node intermediate.ICodeNode, token *Token) {
+	if node != nil {
+		node.SetAttribute("LINE", token.GetLineNum())
+	}
+}
+
 type CallParser struct {
 	IStatementParser
 }
@@ -1507,14 +1527,458 @@ func NewCallParser(parent IStatementParser) *CallParser {
 	}
 }
 
-type CallStandardParser struct {
-	IStatementParser
+func (parser *CallParser) Parse(token *Token) intermediate.ICodeNode {
+	var (
+		pfId        = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+		routineCode = pfId.GetAttribute("ROUTINE_CODE")
+		callParser  ICallParser
+	)
+
+	if routineCode == routinecode.DECLARED || routineCode == routinecode.FORWARD {
+		callParser = NewCallDeclaredParser(parser)
+	} else {
+		callParser = NewCallStandardParser(parser)
+	}
+
+	return callParser.Parse(token)
 }
 
-func NewCallStandardParser(parent IStatementParser) *CallStandardParser {
+var COMMA_SET_CP = OpSubset{
+	PLUS:        PLUS,
+	MINUS:       MINUS,
+	IDENTIFIER:  IDENTIFIER,
+	INTEGER:     INTEGER,
+	REAL:        REAL,
+	STRING:      STRING,
+	NOT:         NOT,
+	LEFT_PAREN:  LEFT_PAREN,
+	COMMA:       COMMA,
+	RIGHT_PAREN: RIGHT_PAREN,
+}
+
+func (parser *CallParser) ParseActualParameters(
+	token *Token,
+	pfId *intermediate.SymTabEntry,
+	isDeclared,
+	isReadReadln,
+	isWriteWriteln bool,
+) intermediate.ICodeNode {
+	var (
+		expressionParser = NewExpressionParser(parser)
+		parmsNode        = intermediate.NewICodeNodeImpl(intermediate.PARAMETERS)
+		formalParms      []*intermediate.SymTabEntry
+		parmCount        = 0
+		parmIndex        = -1
+	)
+
+	if isDeclared {
+		formalParms = (pfId.GetAttribute("ROUTINE_PARMS")).([]*intermediate.SymTabEntry)
+		parmCount = 0
+		if formalParms != nil {
+			parmCount = len(formalParms)
+		}
+	}
+
+	if token.GetName() == LEFT_PAREN {
+		if parmCount != 0 {
+			panic(errors.New("Wrong Number of Params"))
+		}
+		return nil
+	}
+
+	token = parser.NextToken()
+
+	for token.GetName() != RIGHT_PAREN {
+		actualNode := expressionParser.Parse(token)
+		if isDeclared {
+			if parmIndex+1 < parmCount {
+				formalId := formalParms[parmIndex]
+				parser.checkActualParameter(token, formalId, actualNode)
+			} else {
+				panic(errors.New("Wrong Number of Params"))
+			}
+		} else if isReadReadln {
+			spec := actualNode.GetTypeSpec()
+			form := spec.GetForm()
+			if !(actualNode.GetType() == intermediate.VARIABLE) &&
+				(form == intermediate.SCALAR ||
+					spec == intermediate.BooleanType ||
+					(form == intermediate.SUBRANGE &&
+						spec.BaseType() == intermediate.IntegerType)) {
+				panic(errors.New("Invalid Variable Params"))
+			}
+		} else if isWriteWriteln {
+			exprNode := actualNode
+			actualNode = intermediate.NewICodeNodeImpl(intermediate.WRITE_PARM)
+			actualNode.AddChild(exprNode)
+
+			spec := exprNode.GetTypeSpec().BaseType()
+			form := spec.GetForm()
+
+			if !(form == intermediate.SCALAR ||
+				spec == intermediate.BooleanType ||
+				spec.IsPascalString()) {
+				panic(errors.New("Incompatible Types"))
+				token = parser.CurrentToken()
+				actualNode.AddChild(parser.parseWriteSpec(token))
+				token = parser.CurrentToken()
+				actualNode.AddChild(parser.parseWriteSpec(token))
+			}
+
+			parmsNode.AddChild(actualNode)
+			token = parser.Synchronize(COMMA_SET)
+			name := token.GetName()
+
+			if name == COMMA {
+				token = parser.NextToken()
+			} else if EXPR_START_SET.Contains(name) {
+				panic(errors.New("Missing Comma"))
+			} else if name != RIGHT_PAREN {
+				token = parser.Synchronize(EXPR_START_SET)
+			}
+		}
+
+		token = parser.NextToken()
+
+		if len(parmsNode.GetChildren()) == 0 || (isDeclared && (parmIndex != parmCount-1)) {
+			panic(errors.New("Wrong Number of Params"))
+		}
+	}
+
+	return parmsNode
+}
+
+func (parser *CallParser) parseWriteSpec(token *Token) intermediate.ICodeNode {
+	if token.GetName() == COLON {
+		token = parser.NextToken()
+		expressionParser := NewExpressionParser(parser)
+		specNode := expressionParser.Parse(token)
+		if specNode.GetType() == intermediate.INTEGER_CONSTANT {
+			return specNode
+		} else {
+			panic(errors.New("Invalid Number"))
+		}
+	}
+	return nil
+}
+
+func (parser *CallParser) checkActualParameter(
+	token *Token,
+	formalId *intermediate.SymTabEntry,
+	actualNode intermediate.ICodeNode,
+) {
+	var (
+		formalDefn = formalId.GetDefinition()
+		formalSpec = formalId.GetTypeSpec()
+		actualSpec = actualNode.GetTypeSpec()
+	)
+
+	if formalDefn == definition.VAR_PARM {
+		if actualNode.GetType() != intermediate.VARIABLE || actualSpec != formalSpec {
+			panic(errors.New("Invalid Var Params"))
+		}
+	}
+}
+
+type CallDeclaredParser struct {
+	ICallParser
+}
+
+func NewCallDeclaredParser(parent ICallParser) *CallDeclaredParser {
+	return &CallDeclaredParser{
+		parent,
+	}
+}
+
+func (parser *CallDeclaredParser) Parse(token *Token) intermediate.ICodeNode {
+	var (
+		callNode = intermediate.NewICodeNodeImpl(intermediate.CALL)
+		pfId     = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+	)
+	callNode.SetAttribute("ID", pfId)
+	callNode.SetTypeSpec(pfId.GetTypeSpec())
+	token = parser.NextToken()
+	parmsNode := parser.ParseActualParameters(
+		token,
+		pfId,
+		true,
+		false,
+		false,
+	)
+	callNode.AddChild(parmsNode)
+	return callNode
+}
+
+type CallStandardParser struct {
+	ICallParser
+}
+
+func NewCallStandardParser(parent ICallParser) *CallStandardParser {
 	return &CallStandardParser{
 		parent,
 	}
+}
+
+func (parser *CallStandardParser) Parse(token *Token) intermediate.ICodeNode {
+	var (
+		callNode    = intermediate.NewICodeNodeImpl(intermediate.CALL)
+		pfId        = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+		routineCode = (pfId.GetAttribute("ROUTINE_CODE")).(routinecode.RoutineCode)
+	)
+
+	callNode.SetAttribute("ID", pfId)
+	token = parser.NextToken()
+
+	switch routineCode {
+	case routinecode.READ:
+		return parser.parseReadReadln(token, callNode, pfId)
+	case routinecode.READLN:
+		return parser.parseReadReadln(token, callNode, pfId)
+	case routinecode.WRITE:
+		return parser.parseWriteWriteln(token, callNode, pfId)
+	case routinecode.WRITELN:
+		return parser.parseWriteWriteln(token, callNode, pfId)
+	case routinecode.EOF:
+		return parser.parseEofEoln(token, callNode, pfId)
+	case routinecode.EOLN:
+		return parser.parseEofEoln(token, callNode, pfId)
+	case routinecode.ABS:
+		return parser.parseAbsSqr(token, callNode, pfId)
+	case routinecode.SQR:
+		return parser.parseAbsSqr(token, callNode, pfId)
+	case routinecode.ARCTAN:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.COS:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.EXP:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.LN:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.SIN:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.SQRT:
+		return parser.parseArctanCosExpLnSinSqrt(token, callNode, pfId)
+	case routinecode.PRED:
+		return parser.parsePredSucc(token, callNode, pfId)
+	case routinecode.SUCC:
+		return parser.parsePredSucc(token, callNode, pfId)
+	case routinecode.CHR:
+		return parser.parseChr(token, callNode, pfId)
+	case routinecode.ODD:
+		return parser.parseOdd(token, callNode, pfId)
+	case routinecode.ORD:
+		return parser.parseOrd(token, callNode, pfId)
+	case routinecode.ROUND:
+		return parser.parseRoundTrunc(token, callNode, pfId)
+	case routinecode.TRUNC:
+		return parser.parseRoundTrunc(token, callNode, pfId)
+	default:
+		return nil
+	}
+}
+
+func (parser *CallStandardParser) parseReadReadln(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, true, false)
+	callNode.AddChild(parmsNode)
+
+	if pfId == intermediate.ReadId && len(callNode.GetChildren()) == 0 {
+		panic(errors.New("Wrong Number of Params"))
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseWriteWriteln(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, true)
+	callNode.AddChild(parmsNode)
+
+	if pfId == intermediate.WriteId && len(callNode.GetChildren()) == 0 {
+		panic(errors.New("Wrong Number of Params"))
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseEofEoln(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 0) {
+		callNode.SetTypeSpec(intermediate.BooleanType)
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseAbsSqr(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+		if argSpec == intermediate.IntegerType || argSpec == intermediate.RealType {
+			callNode.SetTypeSpec(argSpec)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseArctanCosExpLnSinSqrt(token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+		if argSpec == intermediate.IntegerType ||
+			argSpec == intermediate.RealType {
+			callNode.SetTypeSpec(intermediate.RealType)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parsePredSucc(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+
+		if argSpec == intermediate.IntegerType ||
+			argSpec.GetForm() == intermediate.ENUMERATION {
+			callNode.SetTypeSpec(argSpec)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseChr(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+
+		if argSpec == intermediate.IntegerType {
+			callNode.SetTypeSpec(intermediate.CharType)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseOdd(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+
+		if argSpec == intermediate.IntegerType {
+			callNode.SetTypeSpec(intermediate.BooleanType)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseOrd(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+
+		if argSpec == intermediate.CharType ||
+			argSpec.GetForm() == intermediate.ENUMERATION {
+			callNode.SetTypeSpec(intermediate.IntegerType)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) parseRoundTrunc(
+	token *Token,
+	callNode intermediate.ICodeNode,
+	pfId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+	var parmsNode = parser.ParseActualParameters(token, pfId, false, false, false)
+	callNode.AddChild(parmsNode)
+
+	if parser.checkParmCount(token, parmsNode, 1) {
+		argSpec := (parmsNode.GetChildren()[0]).GetTypeSpec().BaseType()
+
+		if argSpec == intermediate.RealType {
+			callNode.SetTypeSpec(intermediate.IntegerType)
+		} else {
+			panic(errors.New("Invalid Type"))
+		}
+	}
+
+	return callNode
+}
+
+func (parser *CallStandardParser) checkParmCount(
+	token *Token,
+	parmsNode intermediate.ICodeNode,
+	count int,
+) bool {
+	if (parmsNode == nil && count == 0) || len(parmsNode.GetChildren()) == count {
+		return true
+	}
+	panic(errors.New("Wrong Number of Params"))
+	return false
 }
 
 type IfStatementParser struct {
@@ -1527,6 +1991,60 @@ func NewIfStatementParser(parent IStatementParser) *IfStatementParser {
 	}
 }
 
+var THEN_SET = OpSubset{
+	BEGIN:      BEGIN,
+	CASE:       CASE,
+	FOR:        FOR,
+	IF:         IF,
+	REPEAT:     REPEAT,
+	WHILE:      WHILE,
+	IDENTIFIER: IDENTIFIER,
+	SEMICOLON:  SEMICOLON,
+	THEN:       THEN,
+	END:        END,
+	ELSE:       ELSE,
+	UNTIL:      UNTIL,
+	DOT:        DOT,
+}
+
+func (parser *IfStatementParser) Parse(token *Token) intermediate.ICodeNode {
+	token = parser.NextToken()
+	ifNode := intermediate.NewICodeNodeImpl(intermediate.IF)
+	expressionParser := NewExpressionParser(parser)
+	exprNode := expressionParser.Parse(token)
+	ifNode.AddChild(exprNode)
+
+	var exprSpec *intermediate.TypeSpec
+
+	if exprNode != nil {
+		exprSpec = exprNode.GetTypeSpec()
+	} else {
+		exprSpec = intermediate.UndefinedType
+	}
+
+	if !typechecker.IsBoolean(exprSpec) {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	token = parser.Synchronize(THEN_SET)
+	if token.GetName() == THEN {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Then"))
+	}
+
+	statementParser := NewStatementParser(parser)
+	ifNode.AddChild(statementParser.Parse(token))
+	token = parser.CurrentToken()
+
+	if token.GetName() == ELSE {
+		token = parser.NextToken()
+		ifNode.AddChild(statementParser.Parse(token))
+	}
+
+	return ifNode
+}
+
 type WhileStatementParser struct {
 	IStatementParser
 }
@@ -1535,6 +2053,62 @@ func NewWhileStatementParser(parent IStatementParser) *WhileStatementParser {
 	return &WhileStatementParser{
 		parent,
 	}
+}
+
+var DO_SET = OpSubset{
+	BEGIN:      BEGIN,
+	CASE:       CASE,
+	FOR:        FOR,
+	IF:         IF,
+	REPEAT:     REPEAT,
+	WHILE:      WHILE,
+	IDENTIFIER: IDENTIFIER,
+	SEMICOLON:  SEMICOLON,
+	DO:         DO,
+	END:        END,
+	ELSE:       ELSE,
+	UNTIL:      UNTIL,
+	DOT:        DOT,
+}
+
+func (parser *WhileStatementParser) Parse(token *Token) intermediate.ICodeNode {
+	token = parser.NextToken()
+	var (
+		loopNode  = intermediate.NewICodeNodeImpl(intermediate.LOOP)
+		breakNode = intermediate.NewICodeNodeImpl(intermediate.TEST)
+		notNode   = intermediate.NewICodeNodeImpl(intermediate.NOT)
+	)
+
+	loopNode.AddChild(breakNode)
+	breakNode.AddChild(notNode)
+
+	expressionParser := NewExpressionParser(parser)
+	exprNode := expressionParser.Parse(token)
+	notNode.AddChild(exprNode)
+
+	var exprSpec *intermediate.TypeSpec
+
+	if exprNode != nil {
+		exprSpec = exprNode.GetTypeSpec()
+	} else {
+		exprSpec = intermediate.UndefinedType
+	}
+
+	if !typechecker.IsBoolean(exprSpec) {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	token = parser.Synchronize(DO_SET)
+	if token.GetName() == DO {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Do"))
+	}
+
+	statementParser := NewStatementParser(parser)
+	loopNode.AddChild(statementParser.Parse(token))
+
+	return loopNode
 }
 
 type RepeatStatementParser struct {
@@ -1547,6 +2121,38 @@ func NewRepeatStatementParser(parent IStatementParser) *RepeatStatementParser {
 	}
 }
 
+func (parser *RepeatStatementParser) Parse(token *Token) intermediate.ICodeNode {
+	token = parser.NextToken()
+
+	var (
+		loopNode = intermediate.NewICodeNodeImpl(intermediate.LOOP)
+		testNode = intermediate.NewICodeNodeImpl(intermediate.TEST)
+	)
+
+	statementParser := NewStatementParser(parser)
+	statementParser.ParseList(token, loopNode, UNTIL)
+	token = parser.CurrentToken()
+
+	expressionParser := NewExpressionParser(parser)
+	exprNode := expressionParser.Parse(token)
+	testNode.AddChild(exprNode)
+	loopNode.AddChild(testNode)
+
+	var exprSpec *intermediate.TypeSpec
+
+	if exprNode != nil {
+		exprSpec = exprNode.GetTypeSpec()
+	} else {
+		exprSpec = intermediate.UndefinedType
+	}
+
+	if !typechecker.IsBoolean(exprSpec) {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	return loopNode
+}
+
 type ForStatementParser struct {
 	IStatementParser
 }
@@ -1557,6 +2163,130 @@ func NewForStatementParser(parent IStatementParser) *ForStatementParser {
 	}
 }
 
+var TO_DOWNTO_SET = OpSubset{
+	PLUS:       PLUS,
+	MINUS:      MINUS,
+	IDENTIFIER: IDENTIFIER,
+	INTEGER:    INTEGER,
+	REAL:       REAL,
+	STRING:     STRING,
+	NOT:        NOT,
+	LEFT_PAREN: LEFT_PAREN,
+	TO:         TO,
+	DOWNTO:     DOWNTO,
+	SEMICOLON:  SEMICOLON,
+	END:        END,
+	ELSE:       ELSE,
+	UNTIL:      UNTIL,
+	DOT:        DOT,
+}
+
+func (parser *ForStatementParser) Parse(token *Token) intermediate.ICodeNode {
+	token = parser.NextToken()
+	targetToken := token
+	compoundNode := intermediate.NewICodeNodeImpl(intermediate.COMPOUND)
+	loopNode := intermediate.NewICodeNodeImpl(intermediate.LOOP)
+	testNode := intermediate.NewICodeNodeImpl(intermediate.TEST)
+
+	assignmentParser := NewAssignmentStatementParser(parser)
+	initAssignNode := assignmentParser.Parse(token)
+
+	var controlSpec *intermediate.TypeSpec
+
+	if initAssignNode != nil {
+		controlSpec = initAssignNode.GetTypeSpec()
+	} else {
+		controlSpec = intermediate.UndefinedType
+	}
+
+	parser.SetLineNum(initAssignNode, targetToken)
+
+	if !typechecker.IsInteger(controlSpec) &&
+		controlSpec.GetForm() != intermediate.ENUMERATION {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	compoundNode.AddChild(initAssignNode)
+	compoundNode.AddChild(loopNode)
+
+	token = parser.Synchronize(TO_DOWNTO_SET)
+	direction := token.GetName()
+
+	if direction == TO || direction == DOWNTO {
+		token = parser.NextToken()
+	} else {
+		direction = TO
+		panic(errors.New("Missing To-DownTo"))
+	}
+
+	var relOpNode intermediate.ICodeNode
+
+	if direction == TO {
+		relOpNode = intermediate.NewICodeNodeImpl(intermediate.GT)
+	} else {
+		relOpNode = intermediate.NewICodeNodeImpl(intermediate.LT)
+	}
+
+	relOpNode.SetTypeSpec(intermediate.BooleanType)
+	controlVarNode := (initAssignNode.GetChildren())[0]
+	relOpNode.AddChild(controlVarNode.Copy())
+
+	expressionParser := NewExpressionParser(parser)
+	exprNode := expressionParser.Parse(token)
+	relOpNode.AddChild(exprNode)
+
+	var exprSpec *intermediate.TypeSpec
+
+	if exprNode != nil {
+		exprSpec = exprNode.GetTypeSpec()
+	} else {
+		exprSpec = intermediate.UndefinedType
+	}
+
+	if !typechecker.AreAssignmentCompatible(controlSpec, exprSpec) {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	testNode.AddChild(relOpNode)
+	loopNode.AddChild(testNode)
+
+	token = parser.Synchronize(DO_SET)
+	if token.GetName() == DO {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Do"))
+	}
+
+	statementParser := NewStatementParser(parser)
+	loopNode.AddChild(statementParser.Parse(token))
+
+	nextAssignNode := intermediate.NewICodeNodeImpl(intermediate.ASSIGN)
+	nextAssignNode.SetTypeSpec(controlSpec)
+	nextAssignNode.AddChild(controlVarNode.Copy())
+
+	var arithOpNode intermediate.ICodeNode
+
+	if direction == TO {
+		arithOpNode = intermediate.NewICodeNodeImpl(intermediate.ADD)
+	} else {
+		arithOpNode = intermediate.NewICodeNodeImpl(intermediate.SUBTRACT)
+	}
+
+	arithOpNode.SetTypeSpec(intermediate.IntegerType)
+	arithOpNode.AddChild(controlVarNode.Copy())
+
+	oneNode := intermediate.NewICodeNodeImpl(intermediate.INTEGER_CONSTANT)
+	oneNode.SetAttribute("Value", 1)
+	oneNode.SetTypeSpec(intermediate.IntegerType)
+	arithOpNode.AddChild(oneNode)
+
+	nextAssignNode.AddChild(arithOpNode)
+	loopNode.AddChild(nextAssignNode)
+
+	parser.SetLineNum(nextAssignNode, targetToken)
+	return compoundNode
+}
+
 type CaseStatementParser struct {
 	IStatementParser
 }
@@ -1565,6 +2295,268 @@ func NewCaseStatementParser(parent IStatementParser) *CaseStatementParser {
 	return &CaseStatementParser{
 		parent,
 	}
+}
+
+var (
+	CONSTANT_START_SET_CS = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		INTEGER:    INTEGER,
+		PLUS:       PLUS,
+		MINUS:      MINUS,
+		STRING:     STRING,
+	}
+	OF_SET_CS = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		INTEGER:    INTEGER,
+		PLUS:       PLUS,
+		MINUS:      MINUS,
+		STRING:     STRING,
+		OF:         OF,
+		SEMICOLON:  SEMICOLON,
+		END:        END,
+		ELSE:       ELSE,
+		UNTIL:      UNTIL,
+		DOT:        DOT,
+	}
+	COMMA_SET_CS = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		INTEGER:    INTEGER,
+		PLUS:       PLUS,
+		MINUS:      MINUS,
+		STRING:     STRING,
+		COMMA:      COMMA,
+		COLON:      COLON,
+		BEGIN:      BEGIN,
+		CASE:       CASE,
+		FOR:        FOR,
+		IF:         IF,
+		REPEAT:     REPEAT,
+		WHILE:      WHILE,
+		SEMICOLON:  SEMICOLON,
+		END:        END,
+		ELSE:       ELSE,
+		UNTIL:      UNTIL,
+		DOT:        DOT,
+	}
+)
+
+// todo: update new body of parser
+func (parser *CaseStatementParser) Parse(token *Token) intermediate.ICodeNode {
+	token = parser.NextToken()
+	selectNode := intermediate.NewICodeNodeImpl(intermediate.SELECT)
+	expressionParser := NewExpressionParser(parser)
+	exprNode := expressionParser.Parse(token)
+	selectNode.AddChild(exprNode)
+
+	var exprSpec *intermediate.TypeSpec
+
+	if exprNode != nil {
+		exprSpec = exprNode.GetTypeSpec()
+	} else {
+		exprSpec = intermediate.UndefinedType
+	}
+
+	if !typechecker.IsInteger(exprSpec) &&
+		!typechecker.IsChar(exprSpec) &&
+		exprSpec.GetForm() != intermediate.ENUMERATION {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	token = parser.Synchronize(OF_SET_CS)
+	if token.GetName() == OF {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Of"))
+	}
+
+	constantSet := map[string]interface{}{}
+	for token.GetType() != EOFToken && token.GetName() != END {
+		selectNode.AddChild(parser.ParseBranch(token, exprSpec, constantSet))
+		token = parser.CurrentToken()
+		name := token.GetName()
+		if name == SEMICOLON {
+			token = parser.NextToken()
+		} else if CONSTANT_START_SET_CS.Contains(name) {
+			panic(errors.New("Missing Semicolon"))
+		}
+	}
+
+	if token.GetName() == END {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing End"))
+	}
+
+	return selectNode
+}
+
+func (parser *CaseStatementParser) ParseBranch(
+	token *Token,
+	expressionSpec *intermediate.TypeSpec,
+	constantSet map[string]interface{},
+) intermediate.ICodeNode {
+	branchNode := intermediate.NewICodeNodeImpl(intermediate.SELECT_BRANCH)
+	constantsNode := intermediate.NewICodeNodeImpl(intermediate.SELECT_CONSTANTS)
+	branchNode.AddChild(constantsNode)
+	parser.parseConstantList(token, expressionSpec, constantsNode, constantSet)
+	token = parser.CurrentToken()
+
+	if token.GetName() == COLON {
+		token = parser.NextToken()
+	} else {
+		panic(errors.New("Missing Colon"))
+	}
+
+	statementParser := NewStatementParser(parser)
+	branchNode.AddChild(statementParser.Parse(token))
+	return branchNode
+}
+
+func (parser *CaseStatementParser) parseConstantList(
+	token *Token,
+	expressionSpec *intermediate.TypeSpec,
+	constantsNode intermediate.ICodeNode,
+	constantSet map[string]interface{},
+) {
+	for CONSTANT_START_SET_CS.Contains(token.GetName()) {
+		constantsNode.AddChild(parser.parseConstant(token, expressionSpec, &constantSet))
+		token = parser.Synchronize(COMMA_SET_CS)
+
+		if token.GetName() == COMMA {
+			token = parser.NextToken()
+		} else if CONSTANT_START_SET_CS.Contains(token.GetName()) {
+			panic(errors.New("Missing Comma"))
+		}
+	}
+}
+
+func (parser *CaseStatementParser) parseConstant(
+	token *Token,
+	expressionSpec *intermediate.TypeSpec,
+	constantSet *map[string]interface{},
+) intermediate.ICodeNode {
+	var (
+		sign         TokenName
+		constantNode intermediate.ICodeNode
+		constantSpec *intermediate.TypeSpec
+	)
+
+	token = parser.Synchronize(CONSTANT_START_SET_CS)
+	tokenName := token.GetName()
+
+	if tokenName == PLUS || tokenName == MINUS {
+		sign = tokenName
+		token = parser.NextToken()
+	}
+
+	switch token.GetName() {
+	case IDENTIFIER:
+		constantNode = parser.parseIdentifierConstant(token, sign)
+		if constantNode != nil {
+			constantSpec = constantNode.GetTypeSpec()
+		}
+	case INTEGER:
+		constantNode = parser.parseIntegerConstant(token.GetText(), sign)
+		constantSpec = intermediate.IntegerType
+	case STRING:
+		constantNode = parser.parseCharacterConstant(token, (token.GetValue()).(string), sign)
+		constantSpec = intermediate.CharType
+	default:
+		panic(errors.New("Invalid Constant"))
+	}
+
+	if constantNode != nil {
+		value := constantNode.GetAttribute("VALUE").(string)
+
+		if _, ok := (*constantSet)[value]; ok {
+			panic(errors.New("Case Constant Reused"))
+		} else {
+			(*constantSet)[value] = value
+		}
+	}
+
+	if !typechecker.AreComparisonCompatible(expressionSpec, constantSpec) {
+		panic(errors.New("Incompatible Types"))
+	}
+
+	token = parser.NextToken()
+	constantNode.SetTypeSpec(constantSpec)
+	return constantNode
+}
+
+func (parser *CaseStatementParser) parseIdentifierConstant(
+	token *Token,
+	sign TokenName,
+) intermediate.ICodeNode {
+	var (
+		constantNode intermediate.ICodeNode
+		constantSpec *intermediate.TypeSpec
+	)
+
+	text := strings.ToLower(token.GetText())
+	id := parser.GetSymTabStack().LookUpLocal(text)
+
+	if id == nil {
+		id = parser.GetSymTabStack().EnterLocal(text)
+		id.SetDefinition(definition.UNDEFINED)
+		id.SetTypeSpec(intermediate.UndefinedType)
+		panic(errors.New("Identifier Undefined"))
+		return nil
+	}
+
+	defnCode := id.GetDefinition()
+	if defnCode == definition.CONSTANT ||
+		defnCode == definition.ENUMERATION_CONSTANT {
+		constantValue := id.GetAttribute("CONSTANT_VALUE")
+		constantSpec = id.GetTypeSpec()
+
+		if !typechecker.IsInteger(constantSpec) {
+			panic(errors.New("Invalid Constant"))
+		}
+
+		constantNode = intermediate.NewICodeNodeImpl(intermediate.INTEGER_CONSTANT)
+		constantNode.SetAttribute("VALUE", constantValue)
+	}
+
+	id.AppendLineNum(token.GetLineNum())
+
+	if constantNode != nil {
+		constantNode.SetTypeSpec(constantSpec)
+	}
+	return constantNode
+}
+
+func (parser *CaseStatementParser) parseIntegerConstant(
+	val string,
+	sign TokenName,
+) intermediate.ICodeNode {
+	var (
+		constantNode = intermediate.NewICodeNodeImpl(intermediate.INTEGER_CONSTANT)
+		intValue, _  = strconv.ParseInt(val, 10, 64)
+	)
+
+	if sign == MINUS {
+		intValue = -intValue
+	}
+
+	constantNode.SetAttribute("VALUE", intValue)
+	return constantNode
+}
+
+func (parser *CaseStatementParser) parseCharacterConstant(
+	token *Token,
+	val string,
+	sign TokenName,
+) intermediate.ICodeNode {
+	var constantNode intermediate.ICodeNode
+
+	if len(val) == 1 {
+		constantNode = intermediate.NewICodeNodeImpl(intermediate.STRING_CONSTANT)
+		constantNode.SetAttribute("VALUE", val)
+	} else {
+		panic(errors.New("Invalid Constant"))
+	}
+	return constantNode
 }
 
 type ExpressionParser struct {
@@ -1598,6 +2590,17 @@ var MULT_OPS = OpSubset{
 	DIV:   DIV,
 	MOD:   MOD,
 	AND:   AND,
+}
+
+var EXPR_START_SET = OpSubset{
+	PLUS:       PLUS,
+	MINUS:      MINUS,
+	IDENTIFIER: IDENTIFIER,
+	INTEGER:    INTEGER,
+	REAL:       REAL,
+	STRING:     STRING,
+	NOT:        NOT,
+	LEFT_PAREN: LEFT_PAREN,
 }
 
 var TOKEN_NAMES_TO_NODE = map[TokenName]intermediate.NodeType{

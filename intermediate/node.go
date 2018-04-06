@@ -65,6 +65,8 @@ type ICodeNode interface {
 	GetChildren() []ICodeNode
 	SetAttribute(key ICodeKey, val interface{})
 	GetAttribute(key ICodeKey) interface{}
+	SetTypeSpec(spec *TypeSpec)
+	GetTypeSpec() *TypeSpec
 	Copy() ICodeNode
 }
 
@@ -73,6 +75,7 @@ type ICodeNodeImpl struct {
 	parent     ICodeNode
 	children   []ICodeNode
 	attributes map[ICodeKey]interface{}
+	typeSpec   *TypeSpec
 }
 
 func NewICodeNodeImpl(nt NodeType) *ICodeNodeImpl {
@@ -115,6 +118,14 @@ func (node *ICodeNodeImpl) SetAttribute(key ICodeKey, val interface{}) {
 
 func (node *ICodeNodeImpl) GetAttribute(key ICodeKey) interface{} {
 	return node.attributes[key]
+}
+
+func (node *ICodeNodeImpl) SetTypeSpec(spec *TypeSpec) {
+	node.typeSpec = spec
+}
+
+func (node *ICodeNodeImpl) GetTypeSpec() *TypeSpec {
+	return node.typeSpec
 }
 
 func (node *ICodeNodeImpl) Copy() ICodeNode {
