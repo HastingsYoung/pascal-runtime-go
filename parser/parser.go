@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"errors"
 	"github.com/pascal-runtime-go/intermediate"
 	"github.com/pascal-runtime-go/intermediate/definition"
 	"github.com/pascal-runtime-go/intermediate/routinecode"
@@ -109,29 +108,13 @@ func (parser *PascalParser) GetSymTabStack() *intermediate.SymTabStack {
 
 func (parser *PascalParser) Parse() error {
 
-	iCode := intermediate.NewICodeImpl()
-
 	token := parser.NextToken()
 
-	var rootNode intermediate.ICodeNode
+	programParser := NewProgramParserFromScanner(parser.GetScanner())
 
-	if token.GetName() == BEGIN {
-		statementParser := NewStatementParser(parser)
-		rootNode = statementParser.Parse(token)
-		token = parser.CurrentToken()
-	} else {
-		message.Error("Unexpected Token", token)
-	}
-
-	if token.GetName() != DOT {
-		message.Error("Missing Period", token)
-	}
+	programParser.Parse(token, nil)
 
 	token = parser.CurrentToken()
-
-	if rootNode != nil {
-		iCode.SetRoot(rootNode)
-	}
 
 	return nil
 }
@@ -152,7 +135,7 @@ func (parser *PascalParser) Synchronize(set OpSubset) *Token {
 	token := parser.CurrentToken()
 
 	if set.Contains(token.GetName()) {
-		panic(errors.New("Unexpected Token"))
+		panic(message.Error("Unexpected Token", token))
 	}
 
 	token = parser.NextToken()
@@ -249,6 +232,49 @@ func (parser *DeclarationsParser) Parse(
 		token = parser.Synchronize(ROUTINE_START_SET)
 		name = token.GetName()
 	}
+	return nil
+}
+
+type ProgramParser struct {
+	IDeclarationParser
+}
+
+func NewProgramParser(parent IDeclarationParser) *ProgramParser {
+	return &ProgramParser{
+		parent,
+	}
+}
+
+func NewProgramParserFromScanner(scan Scanner) *ProgramParser {
+	return &ProgramParser{
+		NewDeclarationsParser(NewPascalParser(scan)),
+	}
+}
+
+var PROGRAM_START_SET = OpSubset{
+	PROGRAM:   PROGRAM,
+	SEMICOLON: SEMICOLON,
+	CONST:     CONST,
+	TYPE:      TYPE,
+	VAR:       VAR,
+	PROCEDURE: PROCEDURE,
+	FUNCTION:  FUNCTION,
+	BEGIN:     BEGIN,
+}
+
+func (parser *ProgramParser) Parse(
+	token *Token,
+	parentId *intermediate.SymTabEntry,
+) *intermediate.SymTabEntry {
+	token = parser.Synchronize(PROGRAM_START_SET)
+	routineParser := NewDeclaredRoutineParser(parser)
+	routineParser.Parse(token, parentId)
+
+	token = parser.CurrentToken()
+	if token.GetName() != DOT {
+		message.Error("Missing Period", token)
+	}
+
 	return nil
 }
 
@@ -378,7 +404,7 @@ func (parser *DeclaredRoutineParser) Parse(
 		parser.GetSymTabStack().SetProgramId(routineId)
 	} else if routineId.GetAttribute("ROUTINE_CODE") == routinecode.FORWARD {
 		if token.GetName() != SEMICOLON {
-			panic(errors.New("Already Forwarded"))
+			panic(message.Error("Already Forwarded", token))
 		}
 	} else {
 		parser.ParseHeader(token, routineId)
@@ -390,7 +416,7 @@ func (parser *DeclaredRoutineParser) Parse(
 		for ; token.GetName() == SEMICOLON; token = parser.NextToken() {
 		}
 	} else {
-		panic(errors.New("Missing Semicolon"))
+		panic(message.Error("Missing Semicolon", token))
 	}
 
 	if token.GetName() == IDENTIFIER && strings.ToLower(token.GetText()) == "forward" {
@@ -422,12 +448,12 @@ func (parser *DeclaredRoutineParser) ParseRoutineName(
 			routineId = parser.GetSymTabStack().EnterLocal(routineName)
 		} else if routineId.GetAttribute("ROUTINE_CODE") != routinecode.FORWARD {
 			routineId = nil
-			panic(errors.New("Identifier Redefined"))
+			panic(message.Error("Identifier Redefined", token))
 		}
 
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Identifier"))
+		panic(message.Error("Missing Identifier", token))
 	}
 
 	if routineId == nil {
@@ -454,7 +480,7 @@ func (parser *DeclaredRoutineParser) ParseHeader(
 		if spec != nil {
 			form := spec.GetForm()
 			if form == intermediate.ARRAY || form == intermediate.RECORD {
-				panic(errors.New("Invalid Type"))
+				panic(message.Error("Invalid Type", token))
 			}
 		} else {
 			spec = intermediate.UndefinedType
@@ -484,7 +510,7 @@ func (parser *DeclaredRoutineParser) ParseFormalParameters(
 		if token.GetName() == RIGHT_PAREN {
 			token = parser.NextToken()
 		} else {
-			panic(errors.New("Missing Right Paren"))
+			panic(message.Error("Missing Right Paren", token))
 		}
 
 		routineId.SetAttribute("ROUTINE_PARMS", params)
@@ -510,7 +536,7 @@ func (parser *DeclaredRoutineParser) ParseParmSublist(
 		if !isProgram {
 			parmDefn = definition.VAR_PARM
 		} else {
-			panic(errors.New("Invalid Var Parameter"))
+			panic(message.Error("Invalid Var Parameter", token))
 		}
 
 		token = parser.NextToken()
@@ -535,7 +561,7 @@ func (parser *DeclaredRoutineParser) ParseParmSublist(
 				token = parser.NextToken()
 			}
 		} else if NEXT_START_SET.Contains(name) {
-			panic(errors.New("Missing Semicolon"))
+			panic(message.Error("Missing Semicolon", token))
 		}
 
 		token = parser.Synchronize(PARAMETER_SET)
@@ -612,7 +638,7 @@ func (parser *ConstantDefinitionsParser) Parse(
 			constantId = parser.GetSymTabStack().EnterLocal(text)
 			constantId.AppendLineNum(token.GetLineNum())
 		} else {
-			panic(errors.New("Identifier Redefined"))
+			panic(message.Error("Identifier Redefined", token))
 		}
 
 		token = parser.NextToken()
@@ -621,7 +647,7 @@ func (parser *ConstantDefinitionsParser) Parse(
 		if token.GetName() == EQUALS {
 			token = parser.NextToken()
 		} else {
-			panic(errors.New("Missing Equals"))
+			panic(message.Error("Missing Equals", token))
 		}
 
 		constantToken := *token
@@ -648,7 +674,7 @@ func (parser *ConstantDefinitionsParser) Parse(
 				token = parser.NextToken()
 			}
 		} else if NEXT_START_SET.Contains(name) {
-			panic(errors.New("Missing Semicolon"))
+			panic(message.Error("Missing Semicolon", token))
 		}
 
 		token = parser.Synchronize(IDENTIFIER_SET)
@@ -699,7 +725,7 @@ func (parser *ConstantDefinitionsParser) ParseIdentifierConstant(token *Token, s
 	parser.NextToken()
 
 	if id == nil {
-		panic(errors.New("Identifier Undefined"))
+		panic(message.Error("Identifier Undefined", token))
 		return nil
 	}
 
@@ -789,7 +815,7 @@ func (parser *BlockParser) Parse(token *Token, routineId *intermediate.SymTabEnt
 	if name == BEGIN {
 		rootNode = statementParser.Parse(token)
 	} else {
-		panic(errors.New("Missing Begin"))
+		panic(message.Error("Missing Begin", token))
 
 		if STMT_START_SET.Contains(name) {
 			rootNode = intermediate.NewICodeNodeImpl(intermediate.COMPOUND)
@@ -825,7 +851,7 @@ func (parser *TypeDefinitionsParser) Parse(
 			typeId = parser.GetSymTabStack().EnterLocal(text)
 			typeId.AppendLineNum(token.GetLineNum())
 		} else {
-			panic(errors.New("Identifier Redefined"))
+			panic(message.Error("Identifier Redefined", token))
 		}
 
 		token = parser.NextToken()
@@ -834,7 +860,7 @@ func (parser *TypeDefinitionsParser) Parse(
 		if token.GetName() == EQUALS {
 			token = parser.NextToken()
 		} else {
-			panic(errors.New("Missing Equals"))
+			panic(message.Error("Missing Equals", token))
 		}
 
 		typeSpecDefinitionParser := NewTypeSpecificationParser(parser)
@@ -857,7 +883,7 @@ func (parser *TypeDefinitionsParser) Parse(
 				parser.NextToken()
 			}
 		} else if NEXT_START_SET.Contains(name) {
-			panic(errors.New("Missing Semicolon"))
+			panic(message.Error("Missing Semicolon", token))
 		}
 
 		token = parser.Synchronize(IDENTIFIER_SET)
@@ -962,7 +988,7 @@ func (parser *ArrayTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 
 	token = parser.Synchronize(LEFT_BRACKET_SET)
 	if token.GetName() != LEFT_BRACKET {
-		panic(errors.New("Missing Left Bracket"))
+		panic(message.Error("Missing Left Bracket", token))
 	}
 
 	elemType := parser.ParseIndexTypeList(token, arrayType)
@@ -971,14 +997,14 @@ func (parser *ArrayTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 	if token.GetName() == RIGHT_BRACKET {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Right Bracket"))
+		panic(message.Error("Missing Right Bracket", token))
 	}
 
 	token = parser.Synchronize(OF_SET)
 	if token.GetName() == OF {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Of"))
+		panic(message.Error("Missing Of", token))
 	}
 
 	elemType.SetAttribute(intermediate.ARRAY_ELEMENT_TYPE, parser.ParseElementType(token))
@@ -1002,7 +1028,7 @@ func (parser *ArrayTypeParser) ParseIndexTypeList(
 	if name != COMMA && name != RIGHT_BRACKET {
 		if INDEX_START_SET.Contains(name) {
 			anotherIndex = true
-			panic(errors.New("Missing Comma"))
+			panic(message.Error("Missing Comma", token))
 		}
 	} else if name == COMMA {
 		newElementType := intermediate.NewTypeSpecImpl(intermediate.ARRAY)
@@ -1023,7 +1049,7 @@ func (parser *ArrayTypeParser) ParseIndexTypeList(
 		if name != COMMA && name != RIGHT_BRACKET {
 			if INDEX_START_SET.Contains(name) {
 				anotherIndex = true
-				panic(errors.New("Missing Comma"))
+				panic(message.Error("Missing Comma", token))
 			}
 		} else if name == COMMA {
 			newElementType := intermediate.NewTypeSpecImpl(intermediate.ARRAY)
@@ -1058,7 +1084,7 @@ func (parser *ArrayTypeParser) ParseIndexType(token *Token, arrayType *intermedi
 		constants := (indexType.GetAttribute(intermediate.ENUMERATION_CONSTANTS)).([]*intermediate.SymTabEntry)
 		count = len(constants)
 	} else {
-		panic(errors.New("Invalid Index Type"))
+		panic(message.Error("Invalid Index Type", token))
 	}
 
 	arrayType.SetAttribute(intermediate.ARRAY_ELEMENT_COUNT, count)
@@ -1103,7 +1129,7 @@ func (parser *RecordTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 	if token.GetName() == END {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing End"))
+		panic(message.Error("Missing End", token))
 	}
 
 	return recordType
@@ -1151,7 +1177,7 @@ func (parser *SubrangeTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 	name := token.GetName()
 	if CONSTANT_START_SET.Contains(name) {
 		if !sawDotDot {
-			panic(errors.New("Missing Dot Dot"))
+			panic(message.Error("Missing Dot Dot", token))
 		}
 
 		token = parser.Synchronize(CONSTANT_START_SET)
@@ -1165,16 +1191,16 @@ func (parser *SubrangeTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 		maxValue = parser.CheckValueType(constantToken, maxValue, maxType)
 
 		if minValue == nil || maxValue == nil {
-			panic(errors.New("Incompatible Types"))
+			panic(message.Error("Incompatible Types", token))
 		} else if minType != maxType {
-			panic(errors.New("Invalid Subrange Type"))
+			panic(message.Error("Invalid Subrange Type", token))
 		} else if minValue != nil && maxValue != nil {
 			if min, max := minValue.(int), maxValue.(int); min >= max {
-				panic(errors.New("Min Greater Than Max"))
+				panic(message.Error("Min Greater Than Max", token))
 			}
 		}
 	} else {
-		panic(errors.New("Invalid Subrange Type"))
+		panic(message.Error("Invalid Subrange Type", token))
 	}
 
 	subrangeType.SetAttribute(intermediate.SUBRANGE_BASE_TYPE, minType)
@@ -1199,7 +1225,7 @@ func (parser *SubrangeTypeParser) CheckValueType(
 	} else if t.GetForm() == intermediate.ENUMERATION {
 		return value
 	} else {
-		panic(errors.New("Invalid Subrange Type"))
+		panic(message.Error("Invalid Subrange Type", token))
 	}
 }
 
@@ -1237,14 +1263,14 @@ func (parser *SimpleTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 				token = parser.NextToken()
 				return id.GetTypeSpec()
 			} else if def != definition.CONSTANT && def != definition.ENUMERATION_CONSTANT {
-				panic(errors.New("Not Type Identifier"))
+				panic(message.Error("Not Type Identifier", token))
 				token = parser.NextToken()
 			} else {
 				subrangeTypeParser := NewSubrangeTypeParser(parser)
 				return subrangeTypeParser.Parse(token)
 			}
 		} else {
-			panic(errors.New("Identifier Undefined"))
+			panic(message.Error("Identifier Undefined", token))
 			token = parser.NextToken()
 			return nil
 		}
@@ -1252,9 +1278,9 @@ func (parser *SimpleTypeParser) Parse(token *Token) *intermediate.TypeSpec {
 		enumerationTypeParser := NewEnumerationTypeParser(parser)
 		return enumerationTypeParser.Parse(token)
 	case COMMA:
-		panic(errors.New("Invalid Type"))
+		panic(message.Error("Invalid Type", token))
 	case SEMICOLON:
-		panic(errors.New("Invalid Type"))
+		panic(message.Error("Invalid Type", token))
 	default:
 		subrangeTypeParser := NewSubrangeTypeParser(parser)
 		return subrangeTypeParser.Parse(token)
@@ -1322,14 +1348,14 @@ func (parser *VariableDeclarationsParser) ParseTypeSpec(token *Token) *intermedi
 	if token.GetName() == COLON {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Colon"))
+		panic(message.Error("Missing Colon", token))
 	}
 
 	typeSpecificationParser := NewTypeSpecificationParser(parser)
 	spec := typeSpecificationParser.Parse(token)
 
 	if parser.def != definition.VARIABLE && parser.def != definition.FIELD && spec != nil && spec.GetIdentifier() == nil {
-		panic(errors.New("Invalid Type"))
+		panic(message.Error("Invalid Type", token))
 	}
 
 	return spec
@@ -1355,10 +1381,10 @@ func (parser *VariableDeclarationsParser) ParseIdentifierSublist(
 		if token.GetName() == COMMA {
 			token = parser.NextToken()
 			if followSet.Contains(token.GetName()) {
-				panic(errors.New("Missing Identifier"))
+				panic(message.Error("Missing Identifier", token))
 			}
 		} else if IDENTIFIER_START_SET.Contains(token.GetName()) {
-			panic(errors.New("Missing Comma"))
+			panic(message.Error("Missing Comma", token))
 		}
 	}
 
@@ -1383,12 +1409,12 @@ func (parser *VariableDeclarationsParser) ParseIdentifier(token *Token) *interme
 			id.SetDefinition(parser.def)
 			id.AppendLineNum(token.GetLineNum())
 		} else {
-			panic(errors.New("Identifier Redefined"))
+			panic(message.Error("Identifier Redefined", token))
 		}
 
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Identifier"))
+		panic(message.Error("Missing Identifier", token))
 	}
 
 	return id
@@ -1453,7 +1479,7 @@ func (parser *StatementParser) Parse(token *Token) intermediate.ICodeNode {
 		case definition.PROCEDURE:
 			statementNode = NewCallParser(parser).Parse(token)
 		default:
-			panic(errors.New("Unexpected Token"))
+			panic(message.Error("Unexpected Token", token))
 		}
 	case REPEAT:
 		statementNode = NewRepeatStatementParser(parser).Parse(token)
@@ -1497,7 +1523,7 @@ func (parser *StatementParser) ParseList(
 		if tokenName == SEMICOLON {
 			token = parser.NextToken()
 		} else if STMT_START_SET.Contains(tokenName) {
-			panic(errors.New("Mission Semicolon"))
+			panic(message.Error("Mission Semicolon", token))
 		}
 		token = parser.Synchronize(terminatorSet)
 	}
@@ -1507,7 +1533,7 @@ func (parser *StatementParser) ParseList(
 		return
 	}
 
-	panic("Unknown Token")
+	panic(message.Error("Unknown Token", token))
 	return
 }
 
@@ -1581,7 +1607,7 @@ func (parser *CallParser) ParseActualParameters(
 
 	if token.GetName() == LEFT_PAREN {
 		if parmCount != 0 {
-			panic(errors.New("Wrong Number of Params"))
+			panic(message.Error("Wrong Number of Params", token))
 		}
 		return nil
 	}
@@ -1595,7 +1621,7 @@ func (parser *CallParser) ParseActualParameters(
 				formalId := formalParms[parmIndex]
 				parser.checkActualParameter(token, formalId, actualNode)
 			} else {
-				panic(errors.New("Wrong Number of Params"))
+				panic(message.Error("Wrong Number of Params", token))
 			}
 		} else if isReadReadln {
 			spec := actualNode.GetTypeSpec()
@@ -1605,7 +1631,7 @@ func (parser *CallParser) ParseActualParameters(
 					spec == intermediate.BooleanType ||
 					(form == intermediate.SUBRANGE &&
 						spec.BaseType() == intermediate.IntegerType)) {
-				panic(errors.New("Invalid Variable Params"))
+				panic(message.Error("Invalid Variable Params", token))
 			}
 		} else if isWriteWriteln {
 			exprNode := actualNode
@@ -1618,7 +1644,7 @@ func (parser *CallParser) ParseActualParameters(
 			if !(form == intermediate.SCALAR ||
 				spec == intermediate.BooleanType ||
 				spec.IsPascalString()) {
-				panic(errors.New("Incompatible Types"))
+				panic(message.Error("Incompatible Types", token))
 				token = parser.CurrentToken()
 				actualNode.AddChild(parser.parseWriteSpec(token))
 				token = parser.CurrentToken()
@@ -1632,7 +1658,7 @@ func (parser *CallParser) ParseActualParameters(
 			if name == COMMA {
 				token = parser.NextToken()
 			} else if EXPR_START_SET.Contains(name) {
-				panic(errors.New("Missing Comma"))
+				panic(message.Error("Missing Comma", token))
 			} else if name != RIGHT_PAREN {
 				token = parser.Synchronize(EXPR_START_SET)
 			}
@@ -1641,7 +1667,7 @@ func (parser *CallParser) ParseActualParameters(
 		token = parser.NextToken()
 
 		if len(parmsNode.GetChildren()) == 0 || (isDeclared && (parmIndex != parmCount-1)) {
-			panic(errors.New("Wrong Number of Params"))
+			panic(message.Error("Wrong Number of Params", token))
 		}
 	}
 
@@ -1656,7 +1682,7 @@ func (parser *CallParser) parseWriteSpec(token *Token) intermediate.ICodeNode {
 		if specNode.GetType() == intermediate.INTEGER_CONSTANT {
 			return specNode
 		} else {
-			panic(errors.New("Invalid Number"))
+			panic(message.Error("Invalid Number", token))
 		}
 	}
 	return nil
@@ -1675,7 +1701,7 @@ func (parser *CallParser) checkActualParameter(
 
 	if formalDefn == definition.VAR_PARM {
 		if actualNode.GetType() != intermediate.VARIABLE || actualSpec != formalSpec {
-			panic(errors.New("Invalid Var Params"))
+			panic(message.Error("Invalid Var Params", token))
 		}
 	}
 }
@@ -1786,7 +1812,7 @@ func (parser *CallStandardParser) parseReadReadln(
 	callNode.AddChild(parmsNode)
 
 	if pfId == intermediate.ReadId && len(callNode.GetChildren()) == 0 {
-		panic(errors.New("Wrong Number of Params"))
+		panic(message.Error("Wrong Number of Params", token))
 	}
 
 	return callNode
@@ -1801,7 +1827,7 @@ func (parser *CallStandardParser) parseWriteWriteln(
 	callNode.AddChild(parmsNode)
 
 	if pfId == intermediate.WriteId && len(callNode.GetChildren()) == 0 {
-		panic(errors.New("Wrong Number of Params"))
+		panic(message.Error("Wrong Number of Params", token))
 	}
 
 	return callNode
@@ -1835,7 +1861,7 @@ func (parser *CallStandardParser) parseAbsSqr(
 		if argSpec == intermediate.IntegerType || argSpec == intermediate.RealType {
 			callNode.SetTypeSpec(argSpec)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1855,7 +1881,7 @@ func (parser *CallStandardParser) parseArctanCosExpLnSinSqrt(token *Token,
 			argSpec == intermediate.RealType {
 			callNode.SetTypeSpec(intermediate.RealType)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1877,7 +1903,7 @@ func (parser *CallStandardParser) parsePredSucc(
 			argSpec.GetForm() == intermediate.ENUMERATION {
 			callNode.SetTypeSpec(argSpec)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1898,7 +1924,7 @@ func (parser *CallStandardParser) parseChr(
 		if argSpec == intermediate.IntegerType {
 			callNode.SetTypeSpec(intermediate.CharType)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1919,7 +1945,7 @@ func (parser *CallStandardParser) parseOdd(
 		if argSpec == intermediate.IntegerType {
 			callNode.SetTypeSpec(intermediate.BooleanType)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1941,7 +1967,7 @@ func (parser *CallStandardParser) parseOrd(
 			argSpec.GetForm() == intermediate.ENUMERATION {
 			callNode.SetTypeSpec(intermediate.IntegerType)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1962,7 +1988,7 @@ func (parser *CallStandardParser) parseRoundTrunc(
 		if argSpec == intermediate.RealType {
 			callNode.SetTypeSpec(intermediate.IntegerType)
 		} else {
-			panic(errors.New("Invalid Type"))
+			panic(message.Error("Invalid Type", token))
 		}
 	}
 
@@ -1977,7 +2003,7 @@ func (parser *CallStandardParser) checkParmCount(
 	if (parmsNode == nil && count == 0) || len(parmsNode.GetChildren()) == count {
 		return true
 	}
-	panic(errors.New("Wrong Number of Params"))
+	panic(message.Error("Wrong Number of Params", token))
 	return false
 }
 
@@ -2023,14 +2049,14 @@ func (parser *IfStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	}
 
 	if !typechecker.IsBoolean(exprSpec) {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	token = parser.Synchronize(THEN_SET)
 	if token.GetName() == THEN {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Then"))
+		panic(message.Error("Missing Then", token))
 	}
 
 	statementParser := NewStatementParser(parser)
@@ -2095,14 +2121,14 @@ func (parser *WhileStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	}
 
 	if !typechecker.IsBoolean(exprSpec) {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	token = parser.Synchronize(DO_SET)
 	if token.GetName() == DO {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Do"))
+		panic(message.Error("Missing Do", token))
 	}
 
 	statementParser := NewStatementParser(parser)
@@ -2147,7 +2173,7 @@ func (parser *RepeatStatementParser) Parse(token *Token) intermediate.ICodeNode 
 	}
 
 	if !typechecker.IsBoolean(exprSpec) {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	return loopNode
@@ -2203,7 +2229,7 @@ func (parser *ForStatementParser) Parse(token *Token) intermediate.ICodeNode {
 
 	if !typechecker.IsInteger(controlSpec) &&
 		controlSpec.GetForm() != intermediate.ENUMERATION {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	compoundNode.AddChild(initAssignNode)
@@ -2216,7 +2242,7 @@ func (parser *ForStatementParser) Parse(token *Token) intermediate.ICodeNode {
 		token = parser.NextToken()
 	} else {
 		direction = TO
-		panic(errors.New("Missing To-DownTo"))
+		panic(message.Error("Missing To-DownTo", token))
 	}
 
 	var relOpNode intermediate.ICodeNode
@@ -2244,7 +2270,7 @@ func (parser *ForStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	}
 
 	if !typechecker.AreAssignmentCompatible(controlSpec, exprSpec) {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	testNode.AddChild(relOpNode)
@@ -2254,7 +2280,7 @@ func (parser *ForStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	if token.GetName() == DO {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Do"))
+		panic(message.Error("Missing Do", token))
 	}
 
 	statementParser := NewStatementParser(parser)
@@ -2359,14 +2385,14 @@ func (parser *CaseStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	if !typechecker.IsInteger(exprSpec) &&
 		!typechecker.IsChar(exprSpec) &&
 		exprSpec.GetForm() != intermediate.ENUMERATION {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	token = parser.Synchronize(OF_SET_CS)
 	if token.GetName() == OF {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Of"))
+		panic(message.Error("Missing Of", token))
 	}
 
 	constantSet := map[string]interface{}{}
@@ -2377,14 +2403,14 @@ func (parser *CaseStatementParser) Parse(token *Token) intermediate.ICodeNode {
 		if name == SEMICOLON {
 			token = parser.NextToken()
 		} else if CONSTANT_START_SET_CS.Contains(name) {
-			panic(errors.New("Missing Semicolon"))
+			panic(message.Error("Missing Semicolon", token))
 		}
 	}
 
 	if token.GetName() == END {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing End"))
+		panic(message.Error("Missing End", token))
 	}
 
 	return selectNode
@@ -2404,7 +2430,7 @@ func (parser *CaseStatementParser) ParseBranch(
 	if token.GetName() == COLON {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Colon"))
+		panic(message.Error("Missing Colon", token))
 	}
 
 	statementParser := NewStatementParser(parser)
@@ -2425,7 +2451,7 @@ func (parser *CaseStatementParser) parseConstantList(
 		if token.GetName() == COMMA {
 			token = parser.NextToken()
 		} else if CONSTANT_START_SET_CS.Contains(token.GetName()) {
-			panic(errors.New("Missing Comma"))
+			panic(message.Error("Missing Comma", token))
 		}
 	}
 }
@@ -2462,21 +2488,21 @@ func (parser *CaseStatementParser) parseConstant(
 		constantNode = parser.parseCharacterConstant(token, (token.GetValue()).(string), sign)
 		constantSpec = intermediate.CharType
 	default:
-		panic(errors.New("Invalid Constant"))
+		panic(message.Error("Invalid Constant", token))
 	}
 
 	if constantNode != nil {
 		value := constantNode.GetAttribute("VALUE").(string)
 
 		if _, ok := (*constantSet)[value]; ok {
-			panic(errors.New("Case Constant Reused"))
+			panic(message.Error("Case Constant Reused", token))
 		} else {
 			(*constantSet)[value] = value
 		}
 	}
 
 	if !typechecker.AreComparisonCompatible(expressionSpec, constantSpec) {
-		panic(errors.New("Incompatible Types"))
+		panic(message.Error("Incompatible Types", token))
 	}
 
 	token = parser.NextToken()
@@ -2500,7 +2526,7 @@ func (parser *CaseStatementParser) parseIdentifierConstant(
 		id = parser.GetSymTabStack().EnterLocal(text)
 		id.SetDefinition(definition.UNDEFINED)
 		id.SetTypeSpec(intermediate.UndefinedType)
-		panic(errors.New("Identifier Undefined"))
+		panic(message.Error("Identifier Undefined", token))
 		return nil
 	}
 
@@ -2511,7 +2537,7 @@ func (parser *CaseStatementParser) parseIdentifierConstant(
 		constantSpec = id.GetTypeSpec()
 
 		if !typechecker.IsInteger(constantSpec) {
-			panic(errors.New("Invalid Constant"))
+			panic(message.Error("Invalid Constant", token))
 		}
 
 		constantNode = intermediate.NewICodeNodeImpl(intermediate.INTEGER_CONSTANT)
@@ -2554,7 +2580,7 @@ func (parser *CaseStatementParser) parseCharacterConstant(
 		constantNode = intermediate.NewICodeNodeImpl(intermediate.STRING_CONSTANT)
 		constantNode.SetAttribute("VALUE", val)
 	} else {
-		panic(errors.New("Invalid Constant"))
+		panic(message.Error("Invalid Constant", token))
 	}
 	return constantNode
 }
@@ -2718,7 +2744,7 @@ func (parser *ExpressionParser) ParseFactor(token *Token) intermediate.ICodeNode
 		id := parser.GetSymTabStack().LookUpLocal(name)
 
 		if id == nil {
-			panic(errors.New("Identifier Undefined"))
+			panic(message.Error("Identifier Undefined", token))
 			id = parser.GetSymTabStack().EnterLocal(name)
 		}
 
@@ -2757,11 +2783,11 @@ func (parser *ExpressionParser) ParseFactor(token *Token) intermediate.ICodeNode
 		if token.GetName() == RIGHT_PAREN {
 			token = parser.NextToken()
 		} else {
-			panic(errors.New("Missing Right Paren"))
+			panic(message.Error("Missing Right Paren", token))
 		}
 
 	default:
-		panic(errors.New("Unexpected Token"))
+		panic(message.Error("Unexpected Token", token))
 	}
 
 	return rootNode
@@ -2814,7 +2840,7 @@ func (parser *AssignmentStatementParser) Parse(token *Token) intermediate.ICodeN
 	if token.GetName() == COLON_EQUALS {
 		token = parser.NextToken()
 	} else {
-		panic(errors.New("Missing Colon EQUALS"))
+		panic(message.Error("Missing Colon EQUALS", token))
 	}
 
 	expressionParser := NewExpressionParser(parser)

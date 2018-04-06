@@ -34,12 +34,12 @@ func NewPascal(src io.Reader) *Pascal {
 
 func main() {
 	NewPascal(strings.NewReader(
-		`PROGRAM Hello;
+		`PROGRAM HelloWorld;
 
 		VAR       
 		    Num1, Num2, Sum : Integer;
 
 		BEGIN
-			Write('Hello World. Prepare to learn PASCAL!!');
+			writeln('Hello World. Prepare to learn PASCAL!!');
 		END.`))
 }
