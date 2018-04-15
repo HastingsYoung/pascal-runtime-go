@@ -2,12 +2,12 @@
 ## Intro
 A Pascal runtime written in Golang.
 
-Highly inspired by **[Writing Compilers and Interpreters (3rd edition): A Software Engineering Approach](http://www.apropos-logic.com/wci/)** and **[Pascalts](https://github.com/hsiaosiyuan0/Pascalts)**.
+The project is highly inspired by and slightly varied from the book **[Writing Compilers and Interpreters (3rd edition): A Software Engineering Approach](http://www.apropos-logic.com/wci/)** and **[Pascalts](https://github.com/hsiaosiyuan0/Pascalts)**.
 
 ## Quick Start
 ```sh
-	// Check "Hello world" example by running
-	go run main.go
+// Check "Hello world" example by running
+go run main.go
 ```
 
 ## Todos
