@@ -85,6 +85,17 @@ func (src *Source) LineNum() int {
 	return src.lineNum
 }
 
+func (src *Source) AtEOF() bool {
+	if src.currPos <= -2 {
+		src.readLine()
+	}
+	return src.line == nil
+}
+
+func (src *Source) AtEOL() bool {
+	return src.line != nil && src.currPos == len(*src.line)
+}
+
 func (src *Source) readLine() {
 	if src.reader.Scan() {
 		src.lineNum++

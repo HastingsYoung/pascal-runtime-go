@@ -11,6 +11,13 @@ func (table *TokenNamesTable) Contains(name string) bool {
 	return false
 }
 
+func (table *TokenNamesTable) GetName(key string) TokenName {
+	if table.Contains(key) {
+		return (*table)[key]
+	}
+	return ERROR
+}
+
 const (
 	// Reserved words.
 	AND TokenName = iota
@@ -82,6 +89,12 @@ const (
 	STRING
 	ERROR
 	END_OF_FILE
+
+	// Routine reserved
+	WRITELN
+	WRITE
+	READLN
+	READ
 )
 
 var TOKEN_NAMES = map[TokenName]string{
@@ -229,4 +242,12 @@ var TOKEN_NAMES_OTHERS = TokenNamesTable{
 	"STRING":      STRING,
 	"ERROR":       ERROR,
 	"END_OF_FILE": END_OF_FILE,
+}
+
+var ROUTINE_KEYWORDS = TokenNamesTable{
+	// Routine reserved
+	"WRITELN": WRITELN,
+	"WRITE":   WRITE,
+	"READLN":  READLN,
+	"READ":    READ,
 }

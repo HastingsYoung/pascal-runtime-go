@@ -88,9 +88,11 @@ type PascalParser struct {
 }
 
 func NewPascalParser(scanner Scanner) *PascalParser {
+	stack := intermediate.NewSymTabStack()
+	intermediate.Initialize(stack)
 	return &PascalParser{
 		scanner: scanner,
-		stack:   intermediate.NewSymTabStack(),
+		stack:   stack,
 	}
 }
 
@@ -116,6 +118,8 @@ func (parser *PascalParser) Parse() error {
 
 	token = parser.CurrentToken()
 
+	message.Log(token.GetLineNum(), token)
+
 	return nil
 }
 
@@ -134,15 +138,16 @@ func (parser *PascalParser) NextToken() *Token {
 func (parser *PascalParser) Synchronize(set OpSubset) *Token {
 	token := parser.CurrentToken()
 
-	if set.Contains(token.GetName()) {
-		panic(message.Error("Unexpected Token", token))
-	}
+	if !set.Contains(token.GetName()) {
+		message.Warn("Unexpected Token", token, TOKEN_NAMES[token.Name])
 
-	token = parser.NextToken()
-
-	for (token.GetType() != EOFToken) && (set.Contains(token.GetName())) {
 		token = parser.NextToken()
+
+		for (token.GetType() != EOFToken) && (!set.Contains(token.GetName())) {
+			token = parser.NextToken()
+		}
 	}
+
 	return token
 }
 
@@ -165,7 +170,7 @@ var DECLARATION_START_SET = OpSubset{
 	BEGIN:     BEGIN,
 }
 
-var TYPE_START_SET = OpSubset{
+var TYPE_START_SET_DCP = OpSubset{
 	TYPE:      TYPE,
 	VAR:       VAR,
 	PROCEDURE: PROCEDURE,
@@ -198,7 +203,9 @@ func (parser *DeclarationsParser) Parse(
 		constantDefinitionParser.Parse(token, nil)
 	}
 
-	token = parser.Synchronize(TYPE_START_SET)
+	message.Log("DeclarationsParser", token, TOKEN_NAMES[token.Name], token.GetText())
+
+	token = parser.Synchronize(TYPE_START_SET_DCP)
 
 	if token.GetName() == TYPE {
 		token = parser.NextToken()
@@ -267,6 +274,7 @@ func (parser *ProgramParser) Parse(
 	parentId *intermediate.SymTabEntry,
 ) *intermediate.SymTabEntry {
 	token = parser.Synchronize(PROGRAM_START_SET)
+	// A program is essentially a declared routine, start parsing as a routine
 	routineParser := NewDeclaredRoutineParser(parser)
 	routineParser.Parse(token, parentId)
 
@@ -803,13 +811,21 @@ func NewBlockParser(parent IParser) *BlockParser {
 	}
 }
 
-func (parser *BlockParser) Parse(token *Token, routineId *intermediate.SymTabEntry) intermediate.ICodeNode {
+func (parser *BlockParser) Parse(
+	token *Token,
+	routineId *intermediate.SymTabEntry,
+) intermediate.ICodeNode {
+
 	declarationsParser := NewDeclarationsParser(parser)
+
 	statementParser := NewStatementParser(parser)
+
 	declarationsParser.Parse(token, routineId)
+
 	token = parser.Synchronize(STMT_START_SET)
 
 	name := token.GetName()
+
 	var rootNode intermediate.ICodeNode
 
 	if name == BEGIN {
@@ -902,20 +918,35 @@ func NewTypeSpecificationParser(parent IParser) *TypeSpecificationParser {
 	}
 }
 
-var SIMPLE_TYPE_START_SET = OpSubset{
-	IDENTIFIER: IDENTIFIER,
-	INTEGER:    INTEGER,
-	REAL:       REAL,
-	PLUS:       PLUS,
-	MINUS:      MINUS,
-	STRING:     STRING,
-	SEMICOLON:  SEMICOLON,
-	COMMA:      COMMA,
-	LEFT_PAREN: LEFT_PAREN,
-}
+var (
+	SIMPLE_TYPE_START_SET = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		INTEGER:    INTEGER,
+		REAL:       REAL,
+		PLUS:       PLUS,
+		MINUS:      MINUS,
+		STRING:     STRING,
+		SEMICOLON:  SEMICOLON,
+		COMMA:      COMMA,
+		LEFT_PAREN: LEFT_PAREN,
+	}
+	TYPE_START_SET_TSP = OpSubset{
+		IDENTIFIER: IDENTIFIER,
+		INTEGER:    INTEGER,
+		REAL:       REAL,
+		PLUS:       PLUS,
+		MINUS:      MINUS,
+		STRING:     STRING,
+		SEMICOLON:  SEMICOLON,
+		COMMA:      COMMA,
+		LEFT_PAREN: LEFT_PAREN,
+		ARRAY:      ARRAY,
+		RECORD:     RECORD,
+	}
+)
 
 func (parser *TypeSpecificationParser) Parse(token *Token) *intermediate.TypeSpec {
-	token = parser.Synchronize(TYPE_START_SET)
+	token = parser.Synchronize(TYPE_START_SET_TSP)
 
 	switch token.GetName() {
 	case ARRAY:
@@ -1457,11 +1488,12 @@ func (parser *StatementParser) Parse(token *Token) intermediate.ICodeNode {
 	case IDENTIFIER:
 		var idDef definition.Definition
 		text := strings.ToLower(token.GetText())
-		id := parser.GetSymTabStack().LookUpLocal(text)
+		id := parser.GetSymTabStack().LookUp(text)
 
 		if id != nil {
 			idDef = id.GetDefinition()
 		} else {
+			message.Warn("SymTabEntry Not Found", text, id)
 			idDef = definition.UNDEFINED
 		}
 
@@ -1555,7 +1587,7 @@ func NewCallParser(parent IStatementParser) *CallParser {
 
 func (parser *CallParser) Parse(token *Token) intermediate.ICodeNode {
 	var (
-		pfId        = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+		pfId        = parser.GetSymTabStack().LookUp(strings.ToLower(token.GetText()))
 		routineCode = pfId.GetAttribute("ROUTINE_CODE")
 		callParser  ICallParser
 	)
@@ -1719,7 +1751,7 @@ func NewCallDeclaredParser(parent ICallParser) *CallDeclaredParser {
 func (parser *CallDeclaredParser) Parse(token *Token) intermediate.ICodeNode {
 	var (
 		callNode = intermediate.NewICodeNodeImpl(intermediate.CALL)
-		pfId     = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+		pfId     = parser.GetSymTabStack().LookUp(strings.ToLower(token.GetText()))
 	)
 	callNode.SetAttribute("ID", pfId)
 	callNode.SetTypeSpec(pfId.GetTypeSpec())
@@ -1748,7 +1780,7 @@ func NewCallStandardParser(parent ICallParser) *CallStandardParser {
 func (parser *CallStandardParser) Parse(token *Token) intermediate.ICodeNode {
 	var (
 		callNode    = intermediate.NewICodeNodeImpl(intermediate.CALL)
-		pfId        = parser.GetSymTabStack().LookUpLocal(strings.ToLower(token.GetText()))
+		pfId        = parser.GetSymTabStack().LookUp(strings.ToLower(token.GetText()))
 		routineCode = (pfId.GetAttribute("ROUTINE_CODE")).(routinecode.RoutineCode)
 	)
 
@@ -2366,7 +2398,6 @@ var (
 	}
 )
 
-// todo: update new body of parser
 func (parser *CaseStatementParser) Parse(token *Token) intermediate.ICodeNode {
 	token = parser.NextToken()
 	selectNode := intermediate.NewICodeNodeImpl(intermediate.SELECT)

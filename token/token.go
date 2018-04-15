@@ -5,6 +5,7 @@ import (
 	"github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/source"
 	"math"
+	"strings"
 	"unicode"
 )
 
@@ -22,7 +23,7 @@ const (
 
 const MAX_EXPONENT = 37
 
-var TokenTypes = map[TokenType]string{
+var TOKEN_TYPES = map[TokenType]string{
 	EOFToken:           "EOF",
 	EOLToken:           "EOL",
 	WordToken:          "WORD",
@@ -78,7 +79,7 @@ func NewToken(source *Source, char ...rune) *Token {
 	}).Extract()
 }
 
-// each type of token has its own way of extraction
+// Each type of token has its own way of extraction
 // TokenName will be set during the extraction period
 func (tk *Token) Extract() *Token {
 	switch tk.Type {
@@ -99,6 +100,13 @@ func (tk *Token) Extract() *Token {
 		}
 
 		tk.Text = runeToString(chars)
+		key := strings.ToUpper(tk.GetText())
+
+		if TOKEN_NAMES_RESERVED.Contains(key) {
+			tk.Name = TOKEN_NAMES_RESERVED.GetName(key)
+		} else {
+			tk.Name = IDENTIFIER
+		}
 		return tk
 	case NumberToken:
 		var (
@@ -277,54 +285,72 @@ func (tk *Token) Extract() *Token {
 		switch currentChar {
 		case '+':
 			tk.NextChar()
+			tk.Name = PLUS
 			break
 		case '-':
 			tk.NextChar()
+			tk.Name = MINUS
 			break
 		case '*':
 			tk.NextChar()
+			tk.Name = STAR
 			break
 		case '/':
 			tk.NextChar()
+			tk.Name = SLASH
 			break
 		case ',':
 			tk.NextChar()
+			tk.Name = COMMA
 			break
 		case ';':
 			tk.NextChar()
+			tk.Name = SEMICOLON
 			break
 		case '\'':
 			tk.NextChar()
+			tk.Name = QUOTE
 			break
 		case '=':
 			tk.NextChar()
+			tk.Name = EQUALS
 			break
 		case '(':
 			tk.NextChar()
+			tk.Name = LEFT_PAREN
 			break
 		case ')':
 			tk.NextChar()
+			tk.Name = RIGHT_PAREN
 			break
 		case '[':
 			tk.NextChar()
+			tk.Name = LEFT_BRACKET
 			break
 		case ']':
 			tk.NextChar()
+			tk.Name = RIGHT_BRACKET
 			break
 		case '{':
 			tk.NextChar()
+			tk.Name = LEFT_BRACE
 			break
 		case '}':
 			tk.NextChar()
+			tk.Name = RIGHT_BRACE
 			break
 		case '^':
 			tk.NextChar()
+			tk.Name = UP_ARROW
 			break
 		case ':':
 			currentChar, _ = tk.NextChar()
 			if currentChar == '=' {
 				runes = append(runes, currentChar)
 				tk.NextChar()
+				tk.Name = COLON_EQUALS
+			} else {
+				tk.Name = COLON
 			}
 			break
 		case '<':
@@ -332,9 +358,13 @@ func (tk *Token) Extract() *Token {
 			if currentChar == '=' {
 				runes = append(runes, currentChar)
 				tk.NextChar()
+				tk.Name = LESS_EQUALS
 			} else if currentChar == '>' {
 				runes = append(runes, currentChar)
 				tk.NextChar()
+				tk.Name = NOT_EQUALS
+			} else {
+				tk.Name = LESS_THAN
 			}
 		case '>':
 			currentChar, _ = tk.NextChar()
@@ -342,6 +372,9 @@ func (tk *Token) Extract() *Token {
 			if currentChar == '=' {
 				runes = append(runes, currentChar)
 				tk.NextChar()
+				tk.Name = GREATER_EQUALS
+			} else {
+				tk.Name = GREATER_THAN
 			}
 			break
 		case '.':
@@ -350,16 +383,19 @@ func (tk *Token) Extract() *Token {
 			if currentChar == '.' {
 				runes = append(runes, currentChar)
 				tk.NextChar()
+				tk.Name = DOT_DOT
+			} else {
+				tk.Name = DOT
 			}
 			break
 		default:
 			tk.Type = ErrorToken
 			tk.Value = errors.New("Invalid Character")
+			tk.Name = ERROR
 			return tk
 		}
 
 		if tk.Type != ErrorToken {
-			tk.Name = TOKEN_NAMES_SPECIAL_SYMBOLS[runeToString(runes)]
 			tk.Value = currentChar
 		}
 

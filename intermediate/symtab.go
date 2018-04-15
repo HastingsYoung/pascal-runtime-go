@@ -1,9 +1,11 @@
 package intermediate
 
 import (
-	"errors"
+	"fmt"
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/pascal-runtime-go/intermediate/definition"
+	"strconv"
+	"strings"
 )
 
 type SymTabStack struct {
@@ -23,16 +25,24 @@ func (sts *SymTabStack) GetCurrentNestingLevel() int {
 	return sts.currNestingLevel
 }
 
-func (sts *SymTabStack) GetLocalSymtab() *SymTab {
+func (sts *SymTabStack) GetLocalSymTab() *SymTab {
 	return sts.tabs[sts.GetCurrentNestingLevel()]
 }
 
 func (sts *SymTabStack) EnterLocal(name string) *SymTabEntry {
-	return sts.GetLocalSymtab().Enter(name)
+	return sts.GetLocalSymTab().Enter(name)
 }
 
 func (sts *SymTabStack) LookUpLocal(name string) *SymTabEntry {
-	return sts.GetLocalSymtab().LookUp(name)
+	return sts.GetLocalSymTab().LookUp(name)
+}
+
+func (sts *SymTabStack) LookUp(name string) *SymTabEntry {
+	var foundEntry *SymTabEntry = nil
+	for i := sts.GetCurrentNestingLevel(); i >= 0 && foundEntry == nil; i-- {
+		foundEntry = sts.tabs[i].LookUp(name)
+	}
+	return foundEntry
 }
 
 func (sts *SymTabStack) Add(tab *SymTab) *SymTabStack {
@@ -52,7 +62,7 @@ func (sts *SymTabStack) Push() *SymTab {
 }
 
 func (sts *SymTabStack) Pop() *SymTab {
-	symTab := sts.GetLocalSymtab()
+	symTab := sts.GetLocalSymTab()
 	sts.currNestingLevel--
 	sts.Remove(sts.currNestingLevel)
 	return symTab
@@ -66,18 +76,39 @@ func (sts *SymTabStack) GetProgramId() *SymTabEntry {
 	return sts.programId
 }
 
+func (sts *SymTabStack) Iterate(f func(tab *SymTab, i int) bool) {
+	for j, t := range sts.tabs {
+		if !f(t, j) {
+			break
+		}
+	}
+}
+
+func (sts *SymTabStack) ToString() string {
+	var tabs = []string{}
+	sts.Iterate(func(tab *SymTab, i int) bool {
+		tabs = append(tabs, tab.ToString())
+		return true
+	})
+	return strings.Join([]string{
+		strings.Join(tabs, ", "),
+		strconv.Itoa(sts.GetCurrentNestingLevel()),
+		sts.GetProgramId().ToString(),
+	}, " ")
+}
+
 type SymTab struct {
 	// maps of the symbol table entry
 	maps *treemap.Map
 	// a list of symbol names
-	names        []string
+	names        map[string]string
 	nestingLevel int
 }
 
 func NewSymTab(nestingLevel int) *SymTab {
 	return &SymTab{
 		maps:         treemap.NewWithStringComparator(),
-		names:        []string{},
+		names:        map[string]string{},
 		nestingLevel: nestingLevel,
 	}
 }
@@ -88,6 +119,8 @@ func (st *SymTab) GetNestingLevel() int {
 
 func (st *SymTab) Enter(name string) *SymTabEntry {
 	entry := NewSymTabEntry(name, st)
+	st.maps.Put(name, entry)
+	st.names[name] = name
 	return entry
 }
 
@@ -97,12 +130,12 @@ func (st *SymTab) LookUp(name string) *SymTabEntry {
 
 func (st *SymTab) Put(name string, entry *SymTabEntry) {
 	st.maps.Put(name, entry)
+	st.names[name] = name
 }
 
 func (st *SymTab) Get(name string) *SymTabEntry {
 	entry, ok := st.maps.Get(name)
 	if !ok {
-		panic(errors.New("Name of Entry Not Exist"))
 		return nil
 	}
 	return entry.(*SymTabEntry)
@@ -114,6 +147,18 @@ func (st *SymTab) SortedEntries() []*SymTabEntry {
 		entries = append(entries, e.(*SymTabEntry))
 	}
 	return entries
+}
+
+func (st *SymTab) ToString() string {
+	var (
+		keys = st.maps.Keys()
+		maps = map[interface{}]interface{}{}
+	)
+	for _, k := range keys {
+		v, _ := st.maps.Get(k)
+		maps[k] = v
+	}
+	return fmt.Sprintf("%v", maps)
 }
 
 type SymTabEntry struct {
@@ -179,4 +224,8 @@ func (ste *SymTabEntry) GetAttribute(attr string) interface{} {
 		return nil
 	}
 	return val
+}
+
+func (ste *SymTabEntry) ToString() string {
+	return fmt.Sprintf("%v", *ste)
 }

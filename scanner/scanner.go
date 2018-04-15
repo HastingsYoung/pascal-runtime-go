@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	. "github.com/pascal-runtime-go/message"
 	. "github.com/pascal-runtime-go/source"
 	. "github.com/pascal-runtime-go/token"
 )
@@ -50,6 +51,7 @@ func (scanner *PascalScanner) CurrentToken() *Token {
 
 func (scanner *PascalScanner) NextToken() *Token {
 	scanner.token = scanner.ExtractToken()
+	Log("token:", scanner.token, TOKEN_NAMES[scanner.token.Name])
 	return scanner.CurrentToken()
 }
 
@@ -70,4 +72,12 @@ func (scanner *PascalScanner) skipWhiteSpace() {
 			r, _ = scanner.source.NextChar()
 		}
 	}
+}
+
+func (scanner *PascalScanner) AtEOF() bool {
+	return scanner.source.AtEOF()
+}
+
+func (scanner *PascalScanner) AtEOL() bool {
+	return scanner.source.AtEOL()
 }
