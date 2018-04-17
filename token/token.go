@@ -69,19 +69,19 @@ func NewToken(source *Source, char ...rune) *Token {
 			token.Type = ErrorToken
 		}
 
-		return token.Extract()
+		return token.extract()
 	}
 
 	return (&Token{
 		Source:   source,
 		lineNum:  source.LineNum(),
 		position: source.CurrentPos(),
-	}).Extract()
+	}).extract()
 }
 
 // Each type of token has its own way of extraction
 // TokenName will be set during the extraction period
-func (tk *Token) Extract() *Token {
+func (tk *Token) extract() *Token {
 	switch tk.Type {
 	case EOFToken:
 		return tk
