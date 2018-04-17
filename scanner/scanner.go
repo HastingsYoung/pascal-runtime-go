@@ -81,3 +81,7 @@ func (scanner *PascalScanner) AtEOF() bool {
 func (scanner *PascalScanner) AtEOL() bool {
 	return scanner.source.AtEOL()
 }
+
+func (scanner *PascalScanner) LineNum() int {
+	return scanner.source.LineNum()
+}

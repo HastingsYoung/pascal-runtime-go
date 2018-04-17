@@ -27,12 +27,12 @@ go run main.go
 | Package  | Done | Coverage |
 |---|---|---|
 | executor | [x] | |
-| intermediate | [x] | |
+| intermediate | [✓] | [13.2%] |
 | intermediate/definition | [x] | |
 | intermediate/routinecode | [x] | |
 | intermediate/typechecker | [x] | |
 | message | [✓]	| [100.0%] | 
 | parser | [x] | |
-| scanner | [x] | |
+| scanner | [✓] | [86.4%] |
 | source | [✓] | [94.9%] |
 | token | [✓] | [27.4%] |
