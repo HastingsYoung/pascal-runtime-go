@@ -45,6 +45,5 @@ func main() {
 
 		BEGIN
 		    writeln('Hello, world.')
-		END.
-`))
+		END.`))
 }
