@@ -33,6 +33,14 @@ func (subset OpSubset) Add(name TokenName) OpSubset {
 	return s
 }
 
+func (subset OpSubset) Iterate(f func(name TokenName) bool) {
+	for n, _ := range subset {
+		if !f(n) {
+			break
+		}
+	}
+}
+
 type IParser interface {
 	GetScanner() Scanner
 	GetICode() intermediate.ICode
@@ -118,8 +126,6 @@ func (parser *PascalParser) Parse() error {
 
 	token = parser.CurrentToken()
 
-	message.Log(token.GetLineNum(), token)
-
 	return nil
 }
 
@@ -202,8 +208,6 @@ func (parser *DeclarationsParser) Parse(
 		constantDefinitionParser := NewConstantDefinitionsParser(parser)
 		constantDefinitionParser.Parse(token, nil)
 	}
-
-	message.Log("DeclarationsParser", token, TOKEN_NAMES[token.Name], token.GetText())
 
 	token = parser.Synchronize(TYPE_START_SET_DCP)
 

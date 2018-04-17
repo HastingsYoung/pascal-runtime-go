@@ -11,12 +11,24 @@ go run main.go
 ```
 
 ## Todos
-- Source	[✓]
-- Token		[✓]
-- Scanner	[✓]
-- Parser	[✓]
-- Node		[✓]
-- AST		[✓]
-- Messages	[✓]
-- Executor	[x]
-- Debugger	[x]
+- Source 							[✓]
+- Token 							[✓]
+- Scanner 							[✓]
+- Parser 							[✓]
+- Node 								[✓]
+- AST 								[✓]
+- Messages 							[✓]
+- Executor 							[x]
+- Debugger 							[x]
+
+## Tests
+- executor 							[x]
+- intermediate						[x]
+- intermediate/definition			[x]
+- intermediate/routinecode			[x]
+- intermediate/typechecker			[x]
+- message 							[✓]	[100.0%]
+- parser 							[x]
+- scanner 							[x]
+- source 							[✓]	[94.9%]
+- token 							[x]

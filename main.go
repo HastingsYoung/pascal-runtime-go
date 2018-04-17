@@ -35,9 +35,15 @@ func NewPascal(src io.Reader) *Pascal {
 func main() {
 	NewPascal(strings.NewReader(
 		`PROGRAM HelloOnce;
+		
+		VAR
+		    i, j, k : integer;
+		    x, y    : real;
+		    p, q    : boolean;
+		    ch      : char;
+		    index   : 1..10;
 
 		BEGIN
 		    writeln('Hello, world.')
-		END.
-`))
+		END.`))
 }

@@ -2,7 +2,6 @@ package source
 
 import (
 	"bufio"
-	"errors"
 	"github.com/pascal-runtime-go/message"
 	"io"
 	"unicode/utf8"
@@ -60,20 +59,11 @@ func (src *Source) NextChar() (rune, error) {
 }
 
 func (src *Source) PeekChar() (rune, error) {
-	if src.CurrentPos()+1 > len(*src.line) {
+	if src.CurrentPos()+1 >= len(*src.line) {
 		return EOL, nil
 	}
 
-	r, size := utf8.DecodeRune([]byte{(*src.line)[src.CurrentPos()+1]})
-
-	if size == 0 {
-		return EOL, nil
-	}
-
-	if size == 1 {
-		return r, errors.New("Encoding Is Invalid")
-	}
-
+	r, _ := utf8.DecodeRune([]byte{(*src.line)[src.CurrentPos()+1]})
 	return r, nil
 }
 
@@ -83,6 +73,10 @@ func (src *Source) CurrentPos() int {
 
 func (src *Source) LineNum() int {
 	return src.lineNum
+}
+
+func (src *Source) LineString() *string {
+	return src.line
 }
 
 func (src *Source) AtEOF() bool {
@@ -105,6 +99,5 @@ func (src *Source) readLine() {
 		return
 	}
 	src.line = nil
-	// panic(errors.New("Scan Error At: " + *src.line))
 	return
 }
